@@ -35,6 +35,11 @@ class TextWriter(module: Module) {
     module.datas.map(data => data.id -> nameGen.genName(data.originalName)).toMap
   }
 
+  private val memoryNames: Map[MemoryID, String] = {
+    val nameGen = new FreshNameGenerator
+    module.memories.map(mem => mem.id -> nameGen.genName(OriginalName.NoOriginalName)).toMap
+  }
+
   private val funcNames: Map[FunctionID, String] = {
     val nameGen = new FreshNameGenerator
     val importedFunctionNames = module.imports.collect {
@@ -107,6 +112,9 @@ class TextWriter(module: Module) {
   private def appendName(labelID: LabelID)(implicit b: WatBuilder): Unit =
     b.appendElement(labelNames.get(labelID))
 
+  private def appendName(memoryID: MemoryID)(implicit b: WatBuilder): Unit =
+    b.appendElement(memoryNames(memoryID))
+
   private def writeModule(module: Module)(implicit b: WatBuilder): Unit = {
     b.newLineList(
       "module", {
@@ -114,6 +122,7 @@ class TextWriter(module: Module) {
         module.imports.foreach(writeImport)
         module.funcs.foreach(writeFunction)
         module.tags.foreach(writeTag)
+        module.memories.foreach(writeMemory)
         module.globals.foreach(writeGlobal)
         module.exports.foreach(writeExport)
         module.start.foreach(writeStart)
@@ -315,6 +324,16 @@ class TextWriter(module: Module) {
       }
     )
 
+  private def writeMemory(mem: Memory)(implicit b: WatBuilder) = {
+    b.newLineList(
+      "memory", {
+        appendName(mem.id)
+        b.appendElement(mem.limits.min.toString)
+        mem.limits.max.foreach(max => b.appendElement(max.toString))
+      }
+    )
+  }
+
   private def writeExport(e: Export)(implicit
       b: WatBuilder
   ) = b.newLineList(
@@ -329,6 +348,11 @@ class TextWriter(module: Module) {
         case ExportDesc.Global(id, _) =>
           b.sameLineList(
             "global",
+            { appendName(id) }
+          )
+        case ExportDesc.Memory(id, _) =>
+          b.sameLineList(
+            "memory",
             { appendName(id) }
           )
       }
@@ -483,6 +507,14 @@ class TextWriter(module: Module) {
       case instr: StructFieldInstr =>
         appendName(instr.structTypeID)
         appendName(instr.structTypeID, instr.fieldID)
+
+      case instr: MemoryInstr =>
+        appendName(instr.memoryID)
+
+      // https://www.w3.org/TR/wasm-core-2/#memory-instructions%E2%91%A8
+      case instr: LoadStoreInstr =>
+        if (instr.arg.align != 0) b.appendElement(s"align=${instr.arg.offset}")
+        if (instr.arg.offset != 0) b.appendElement(s"offset=${instr.arg.offset}")
 
       // Specific instructions with unique-ish shapes
 

@@ -532,4 +532,8 @@ object VarGen {
     case object string extends DataID
   }
 
+  object genMemoryID {
+    case object memory extends MemoryID
+  }
+
 }

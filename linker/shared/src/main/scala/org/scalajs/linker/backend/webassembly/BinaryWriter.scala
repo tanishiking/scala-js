@@ -55,6 +55,9 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
     allIDs.zipWithIndex.toMap
   }
 
+  private val memoryIdxValues: Map[MemoryID, Int] =
+    module.memories.map(_.id).zipWithIndex.toMap
+
   private val fieldIdxValues: Map[TypeID, Map[FieldID, Int]] = {
     (for {
       recType <- module.types
@@ -97,6 +100,7 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
     writeSection(fullOutput, SectionType)(writeTypeSection(_))
     writeSection(fullOutput, SectionImport)(writeImportSection(_))
     writeSection(fullOutput, SectionFunction)(writeFunctionSection(_))
+    writeSection(fullOutput, SectionMemory)(writeMemorySection(_))
     writeSection(fullOutput, SectionTag)(writeTagSection(_))
     writeSection(fullOutput, SectionGlobal)(writeGlobalSection(_))
     writeSection(fullOutput, SectionExport)(writeExportSection(_))
@@ -207,6 +211,20 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
     }
   }
 
+  private def writeMemorySection(buf: Buffer): Unit = {
+    buf.vec(module.memories) { mem =>
+      mem.limits.max match {
+        case None =>
+          buf.byte(0x00) // no maximum
+          buf.u32(mem.limits.min)
+        case Some(max) =>
+          buf.byte(0x01)
+          buf.u32(mem.limits.min)
+          buf.u32(max)
+      }
+    }
+  }
+
   private def writeGlobalSection(buf: Buffer): Unit = {
     buf.vec(module.globals) { global =>
       writeType(buf, global.tpe)
@@ -225,6 +243,9 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
         case ExportDesc.Global(id, _) =>
           buf.byte(0x03)
           writeGlobalIdx(buf, id)
+        case ExportDesc.Memory(id, _) =>
+          buf.byte(0x02)
+          writeMemoryIdx(buf, id)
       }
     }
   }
@@ -344,6 +365,9 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
   private def writeGlobalIdx(buf: Buffer, globalID: GlobalID): Unit =
     buf.u32(globalIdxValues(globalID))
 
+  private def writeMemoryIdx(buf: Buffer, memoryID: MemoryID): Unit =
+    buf.u32(memoryIdxValues(memoryID))
+
   private def writeLocalIdx(buf: Buffer, localID: LocalID): Unit = {
     localIdxValues match {
       case Some(values) => buf.u32(values(localID))
@@ -429,6 +453,11 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
       case instr: StructFieldInstr =>
         writeTypeIdx(buf, instr.structTypeID)
         writeFieldIdx(buf, instr.structTypeID, instr.fieldID)
+      case instr: MemoryInstr =>
+        writeMemoryIdx(buf, instr.memoryID)
+      case instr: LoadStoreInstr =>
+        buf.u32(instr.arg.align)
+        buf.u32(instr.arg.offset)
 
       // Specific instructions with unique-ish shapes
 

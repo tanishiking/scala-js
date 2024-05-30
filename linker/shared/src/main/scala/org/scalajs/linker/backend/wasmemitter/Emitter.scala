@@ -123,6 +123,7 @@ final class Emitter(config: Emitter.Config) {
     genStringPoolData()
     genStartFunction(sortedClasses, moduleInitializers, topLevelExportDefs)
     genDeclarativeElements()
+    genMemory()
   }
 
   private def genStringPoolData()(implicit ctx: WasmContext): Unit = {
@@ -320,6 +321,18 @@ final class Emitter(config: Emitter.Config) {
         wamod.Element(watpe.RefType.funcref, exprs, wamod.Element.Mode.Declarative)
       )
     }
+  }
+
+  private def genMemory()(implicit ctx: WasmContext): Unit = {
+    ctx.moduleBuilder.addMemory(
+      wamod.Memory(genMemoryID.memory, wamod.Memory.Limits(1, None))
+    )
+    // > all modules accessing WASI APIs also export a linear memory with the name `memory`.
+    // > Data pointers in WASI API calls are relative to this memory's index space.
+    // https://github.com/WebAssembly/WASI/blob/main/legacy/application-abi.md
+    ctx.moduleBuilder.addExport(
+      wamod.Export("memory", wamod.ExportDesc.Memory(genMemoryID.memory, OriginalName.NoOriginalName))
+    )
   }
 
   private def buildJSFileContent(module: ModuleSet.Module,
