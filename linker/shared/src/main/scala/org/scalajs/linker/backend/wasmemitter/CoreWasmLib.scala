@@ -578,6 +578,7 @@ object CoreWasmLib {
     genIdentityHashCode()
     genSearchReflectiveProxy()
     genArrayCloneFunctions()
+    genAllocate()
   }
 
   private def newFunctionBuilder(functionID: FunctionID, originalName: OriginalName)(
@@ -2160,6 +2161,114 @@ object CoreWasmLib {
     fb += LocalGet(resultUnderlyingLocal)
     fb += StructNew(arrayStructTypeID)
 
+    fb.buildAndAddToModule()
+  }
+
+  private def genAllocate()(implicit ctx: WasmContext): Unit = {
+    def throwEx(fb: FunctionBuilder, msg: String): Unit = {
+      fb ++= ctx.getConstantStringInstr("TypeError")
+      fb += Call(genFunctionID.jsGlobalRefGet)
+      fb += Call(genFunctionID.jsNewArray)
+      fb ++= ctx.getConstantStringInstr(msg)
+      fb += Call(genFunctionID.jsArrayPush)
+      fb += Call(genFunctionID.jsNew)
+      fb += ExternConvertAny
+      fb += Throw(genTagID.exception)
+    }
+
+    ctx.addGlobal(
+      Global(
+        genGlobalID.currentMemoryAddr,
+        OriginalName.NoOriginalName,
+        Int32,
+        Expr(List(I32Const(0))),
+        isMutable = true
+      )
+    )
+
+    val fb = newFunctionBuilder(genFunctionID.allocate)
+    val sizeParam = fb.addParam("size", Int32) // size in byte
+    fb.setResultType(RefType(genTypeID.MemorySegment))
+
+    val WASM_PAGE_SIZE_IN_BYTES = 65536 // 64 KiB
+
+    // i32 can represent up to 2Gib
+    // While Wasm linear memory can represent up to 4Gib (and more in future)
+    val currentMemorySizeInByte = fb.addLocal("currentMemorySizeInByte", Int32)
+    val oldCurrentAddress = fb.addLocal("oldCurrentAddress", Int32)
+    val newCurrentAddress = fb.addLocal("newCurrentAddress", Int32)
+    val instanceLocal = fb.addLocal("instanceLocal", RefType(genTypeID.MemorySegment))
+
+    val memorySegmentClassInfo = ctx.getClassInfo(SpecialNames.MemorySegmentClass)
+
+    fb += GlobalGet(genGlobalID.currentMemoryAddr)
+    fb += LocalTee(oldCurrentAddress)
+    fb += LocalGet(sizeParam)
+    fb += I32Add
+    fb += LocalTee(newCurrentAddress)
+
+    fb += MemorySize(genMemoryID.memory)
+    fb += I32Const(WASM_PAGE_SIZE_IN_BYTES)
+    fb += I32Mul
+    fb += LocalTee(currentMemorySizeInByte)
+
+    fb += I32GeU
+    fb.ifThen() { // if (currentAddress + size >= currentMemorySize) then grow memory
+
+      // number of pages to grow
+      // (newCurrentAddress - currentMemorySizeInByte) / WASM_PAGE_SIZE_IN_BYTES + 1
+      fb += LocalGet(newCurrentAddress)
+      fb += LocalGet(currentMemorySizeInByte)
+      fb += I32Sub
+
+      fb += I32Const(WASM_PAGE_SIZE_IN_BYTES)
+      fb += I32DivU
+
+      fb += I32Const(1)
+      fb += I32Add
+
+      fb += MemoryGrow(genMemoryID.memory)
+      fb += I32Const(-1)
+      fb += I32Eq
+      fb.ifThen() {
+        throwEx(
+          fb,
+          "Cloudn't allocate memory: out of memory: requested size is larger than the maximum size of WebAssembly linear memory."
+        )
+      }
+    }
+
+    // validate (newCurrentAddress < currentMemorySizeInByte)
+    fb += LocalGet(newCurrentAddress)
+    // currentMemorySizeInByte
+    fb += MemorySize(genMemoryID.memory)
+    fb += I32Const(WASM_PAGE_SIZE_IN_BYTES)
+    fb += I32Mul
+    fb += I32GeU
+    fb.ifThen() {
+      throwEx(fb, "Couldn't allocate memory")
+    }
+
+    fb += LocalGet(newCurrentAddress)
+    fb += GlobalSet(genGlobalID.currentMemoryAddr)
+
+    // create MemorySegment instance
+    fb += Call(genFunctionID.newDefault(SpecialNames.MemorySegmentClass))
+    fb += LocalTee(instanceLocal)
+    fb += LocalGet(oldCurrentAddress)
+    fb += StructSet(
+      genTypeID.MemorySegment,
+      genFieldID.forClassInstanceField(SpecialNames.MemorySegmentStartField)
+    )
+
+    fb += LocalGet(instanceLocal)
+    fb += LocalGet(sizeParam)
+    fb += StructSet(
+      genTypeID.MemorySegment,
+      genFieldID.forClassInstanceField(SpecialNames.MemorySegmentSizeField)
+    )
+
+    fb += LocalGet(instanceLocal)
     fb.buildAndAddToModule()
   }
 

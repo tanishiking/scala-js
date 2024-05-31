@@ -7,6 +7,7 @@ package helloworld
 
 import scala.scalajs.js
 import js.annotation._
+import scala.scalajs.wasm._
 
 object HelloWorld {
   def main(args: Array[String]): Unit = {
@@ -20,6 +21,12 @@ object HelloWorld {
       sayHelloFromJQuery()
       sayHelloFromTypedJQuery()
     } else {
+      MemoryAllocator.withAllocator { arena =>
+        val seg = arena.allocate(4)
+        seg.setInt(0, 123)
+        val res = seg.getInt(0)
+        println(res)
+      }
       println("Hello world!")
     }
   }

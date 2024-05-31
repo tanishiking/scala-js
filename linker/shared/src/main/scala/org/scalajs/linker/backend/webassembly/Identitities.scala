@@ -38,4 +38,6 @@ object Identitities {
   trait DataID
 
   trait ExportID
+
+  trait MemoryID
 }

@@ -34,6 +34,7 @@ object Modules {
   object ExportDesc {
     final case class Func(id: FunctionID, originalName: OriginalName) extends ExportDesc
     final case class Global(id: GlobalID, originalName: OriginalName) extends ExportDesc
+    final case class Memory(id: MemoryID, originalName: OriginalName) extends ExportDesc
   }
 
   /** A WebAssembly `import`. */
@@ -104,6 +105,11 @@ object Modules {
     }
   }
 
+  final case class Memory(id: MemoryID, limits: Memory.Limits)
+  object Memory {
+    final case class Limits(min: Int, max: Option[Int])
+  }
+
   /** A WebAssembly `module`. */
   final class Module(
       val types: List[RecType],
@@ -114,6 +120,7 @@ object Modules {
       val exports: List[Export],
       val start: Option[FunctionID],
       val elems: List[Element],
-      val datas: List[Data]
+      val datas: List[Data],
+      val memories: List[Memory]
   )
 }

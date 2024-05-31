@@ -16,7 +16,7 @@ import scala.annotation.switch
 
 import scala.collection.mutable
 
-import org.scalajs.ir.{ClassKind, OriginalName, Position, UTF8String}
+import org.scalajs.ir.{ClassKind, OriginalName, Position, UTF8String, Printers, Transformers, Traversers}
 import org.scalajs.ir.Names._
 import org.scalajs.ir.OriginalName.NoOriginalName
 import org.scalajs.ir.Trees._
@@ -264,6 +264,96 @@ object FunctionEmitter {
   private final class ClosureFunctionID(debugName: OriginalName) extends wanme.FunctionID {
     override def toString(): String = s"ClosureFunctionID(${debugName.toString()})"
   }
+
+  def implementIntrinsics(className: ClassName, method: MethodDef)(
+    implicit pos: Position): Option[Transient] = {
+    if (className == SpecialNames.MemorySegmentClass) {
+      (method.name.name match {
+        case SpecialNames.MemorySegmentLoadByte =>
+          Some(Load(I8, VarRef(method.args.head.name)(method.args.head.ptpe), ByteType))
+        case SpecialNames.MemorySegmentLoadInt =>
+          Some(Load(I32, VarRef(method.args.head.name)(method.args.head.ptpe), IntType))
+        case SpecialNames.MemorySegmentStoreByte =>
+          Some(Store(
+            I8,
+            VarRef(method.args(0).name)(method.args(0).ptpe),
+            VarRef(method.args(1).name)(method.args(1).ptpe)
+          ))
+        case SpecialNames.MemorySegmentStoreInt =>
+          Some(Store(
+            I32,
+            VarRef(method.args(0).name)(method.args(0).ptpe),
+            VarRef(method.args(1).name)(method.args(1).ptpe)
+          ))
+        case _ => None
+      }).map { value => Transient(value) }
+
+    } else if (className == SpecialNames.MemoryAllocatorClass) {
+      if (method.name.name == SpecialNames.MemoryAllocatorAllocate)
+        Some(Transient(Allocate(VarRef(method.args.head.name)(method.args.head.ptpe))))
+      else if (method.name.name == SpecialNames.MemoryAllocatorFree)
+        Some(Transient(Free()))
+      else None
+    } else None
+  }
+
+  // Transient.Values
+  private final case class Allocate(size: Tree) extends Transient.Value {
+    val tpe: Type = ClassType(SpecialNames.MemorySegmentClass)
+
+    def printIR(out: Printers.IRTreePrinter): Unit =
+      out.print(s"Alloc($size)")
+    def transform(transformer: Transformers.Transformer, isStat: Boolean)(
+        implicit pos: Position): Tree =
+      Transient(Allocate(transformer.transformExpr(size)))
+    def traverse(traverser: Traversers.Traverser): Unit =
+      traverser.traverse(size)
+  }
+
+  private final case class Free() extends Transient.Value {
+    val tpe: Type = NoType
+    def printIR(out: Printers.IRTreePrinter): Unit =
+      out.print(s"Free()")
+    def transform(transformer: Transformers.Transformer, isStat: Boolean)(
+      implicit pos: Position): Tree = Transient(this)
+    def traverse(traverser: Traversers.Traverser): Unit = ()
+  }
+
+  private final case class Load(size: Size, offset: Tree, val tpe: Type) extends Transient.Value {
+    def printIR(out: Printers.IRTreePrinter): Unit =
+      out.print(s"${size.print}.load($offset)")
+    def transform(transformer: Transformers.Transformer, isStat: Boolean)(
+        implicit pos: Position): Tree =
+      Transient(Load(size, transformer.transformExpr(offset), tpe))
+    def traverse(traverser: Traversers.Traverser): Unit =
+      traverser.traverse(offset)
+  }
+
+  private final case class Store(size: Size, offset: Tree, value: Tree) extends Transient.Value {
+    val tpe: Type = NoType
+    def printIR(out: Printers.IRTreePrinter): Unit =
+      out.print(s"${size.print}.store($offset)")
+    def transform(transformer: Transformers.Transformer, isStat: Boolean)(
+        implicit pos: Position): Tree =
+      Transient(Store(size, transformer.transformExpr(offset), transformer.transformExpr(value)))
+    def traverse(traverser: Traversers.Traverser): Unit = {
+      traverser.traverse(offset)
+      traverser.traverse(value)
+    }
+  }
+
+  private abstract sealed class Size {
+    def print: String = this match {
+      case I8 => "i8"
+      case I16 => "i16"
+      case I32 => "i32"
+      case I64 => "i64"
+    }
+  }
+  private final case object I8 extends Size
+  private final case object I16 extends Size
+  private final case object I32 extends Size
+  private final case object I64 extends Size
 }
 
 private class FunctionEmitter private (
@@ -405,6 +495,12 @@ private class FunctionEmitter private (
       case t: JSSuperSelect     => genJSSuperSelect(t)
       case t: JSSuperMethodCall => genJSSuperMethodCall(t)
       case t: JSNewTarget       => genJSNewTarget(t)
+
+      // transient
+      case Transient(t: Allocate) => genAllocate(t)
+      case Transient(t: Free) => genFree()
+      case Transient(t: Load) => genLoad(t)
+      case Transient(t: Store) => genStore(t)
 
       case _: RecordSelect | _: RecordValue | _: Transient | _: JSSuperConstructorCall =>
         throw new AssertionError(s"Invalid tree: $tree")
@@ -2691,6 +2787,50 @@ private class FunctionEmitter private (
     genReadStorage(newTargetStorage)
 
     AnyType
+  }
+
+  // Transient
+  private def genAllocate(alloc: Allocate): Type = {
+    genTreeAuto(alloc.size)
+    fb += wa.Call(genFunctionID.allocate)
+    alloc.tpe
+  }
+
+  private def genFree(): Type = {
+    fb += wa.I32Const(0)
+    fb += wa.GlobalSet(genGlobalID.currentMemoryAddr)
+    NoType
+  }
+
+  private def genStore(store: Store): Type = {
+    genTreeAuto(store.offset)
+    genTreeAuto(store.value)
+    store.size match {
+      case I8 =>
+        fb += wa.I32Store8(wa.MemoryArg())
+      case I16 =>
+        fb += wa.I32Store16(wa.MemoryArg())
+      case I32 =>
+        fb += wa.I32Store(wa.MemoryArg())
+      case I64 =>
+        fb += wa.I64Store(wa.MemoryArg())
+    }
+    store.tpe // NoType
+  }
+
+  private def genLoad(load: Load): Type = {
+    genTreeAuto(load.offset)
+    load.size match {
+      case I8 =>
+        fb += wa.I32Load8S(wa.MemoryArg())
+      case I16 =>
+        fb += wa.I32Load16S(wa.MemoryArg())
+      case I32 =>
+        fb += wa.I32Load(wa.MemoryArg())
+      case I64 =>
+        fb += wa.I64Load(wa.MemoryArg())
+    }
+    load.tpe
   }
 
   /*--------------------------------------------------------------------*
