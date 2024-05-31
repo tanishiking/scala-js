@@ -409,7 +409,10 @@ object Emitter {
 
       // See genIdentityHashCode in HelperFunctions
       factory.callMethodStatically(BoxedDoubleClass, hashCodeMethodName),
-      factory.callMethodStatically(BoxedStringClass, hashCodeMethodName)
+      factory.callMethodStatically(BoxedStringClass, hashCodeMethodName),
+
+      factory.instantiateClass(MemorySegmentClass, MemorySegmentCtor),
+      factory.instantiateClass(MemoryAllocatorClass, MemoryAllocatorCtor)
     )
   }
 

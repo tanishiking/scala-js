@@ -1107,7 +1107,10 @@ class ClassEmitter(coreSpec: CoreSpec) {
       else
         Some(transformClassType(className).toNonNullable)
 
-    val body = method.body.getOrElse(throw new Exception("abstract method cannot be transformed"))
+    val body =
+      FunctionEmitter.implementIntrinsics(className, method).getOrElse {
+        method.body.getOrElse(throw new Exception("abstract method cannot be transformed"))
+      }
 
     // Emit the function
     FunctionEmitter.emitFunction(
@@ -1187,6 +1190,7 @@ class ClassEmitter(coreSpec: CoreSpec) {
     val methodNameUTF8 = UTF8String(methodName.nameString)
     OriginalName(namespace ++ className.encoded ++ dotUTF8String ++ methodNameUTF8)
   }
+
 }
 
 object ClassEmitter {

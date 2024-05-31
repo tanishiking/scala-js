@@ -82,6 +82,8 @@ object VarGen {
     case object lastIDHashCode extends GlobalID
 
     case object idHashCodeMap extends JSHelperGlobalID
+
+    case object currentMemoryAddr extends GlobalID
   }
 
   object genFunctionID {
@@ -293,6 +295,10 @@ object VarGen {
     case object newArrayObject extends FunctionID
     case object identityHashCode extends FunctionID
     case object searchReflectiveProxy extends FunctionID
+
+    // Wasm internal intrinsics
+    case object allocate extends FunctionID
+    case object free extends FunctionID
   }
 
   object genFieldID {
@@ -440,6 +446,7 @@ object VarGen {
     val ClassStruct = forClass(ClassClass)
     val ThrowableStruct = forClass(ThrowableClass)
     val JSExceptionStruct = forClass(SpecialNames.JSExceptionClass)
+    val MemorySegment = forClass(SpecialNames.MemorySegmentClass)
 
     def captureData(index: Int): TypeID =
       CaptureDataID(index)
@@ -535,5 +542,4 @@ object VarGen {
   object genMemoryID {
     case object memory extends MemoryID
   }
-
 }

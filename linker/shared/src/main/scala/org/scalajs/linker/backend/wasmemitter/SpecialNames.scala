@@ -40,4 +40,25 @@ object SpecialNames {
 
   /** A unique simple method name to map all method *signatures* into `MethodName`s. */
   val normalizedSimpleMethodName = SimpleMethodName("m")
+
+  // Memory-related Class and Methods
+  val MemoryAllocatorClass = ClassName("scala.scalajs.wasm.MemoryAllocator")
+  val MemorySegmentClass = ClassName("scala.scalajs.wasm.MemorySegment")
+  val MemoryAllocatorCtor = MethodName.constructor(Nil)
+  val MemorySegmentCtor = MethodName.constructor(List(IntRef, IntRef)) // start, size
+
+  val MemorySegmentStartField = FieldName(MemorySegmentClass, SimpleFieldName("start"))
+  val MemorySegmentSizeField = FieldName(MemorySegmentClass, SimpleFieldName("size"))
+
+  val MemoryAllocatorAllocate =
+    MethodName("allocate", List(IntRef), ClassRef(MemorySegmentClass))
+  val MemoryAllocatorFree = MethodName("free", Nil, VoidRef)
+
+  val MemorySegmentLoadByte = MethodName("_loadByte", List(IntRef), IntRef)
+  val MemorySegmentLoadInt = MethodName("_loadInt", List(IntRef), IntRef)
+  val MemorySegmentLoadMethodNames = Set(MemorySegmentLoadByte, MemorySegmentLoadInt)
+
+  val MemorySegmentStoreByte = MethodName("_storeByte", List(IntRef, ByteRef), VoidRef)
+  val MemorySegmentStoreInt = MethodName("_storeInt", List(IntRef, IntRef), VoidRef)
+  val MemorySegmentStoreMethodNames = Set(MemorySegmentStoreByte, MemorySegmentStoreInt)
 }
