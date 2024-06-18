@@ -22,6 +22,7 @@ import org.scalajs.ir.OriginalName.NoOriginalName
 import org.scalajs.ir.Trees._
 import org.scalajs.ir.Types._
 
+import org.scalajs.linker.standard.CoreSpec
 import org.scalajs.linker.backend.webassembly._
 import org.scalajs.linker.backend.webassembly.{Instructions => wa}
 import org.scalajs.linker.backend.webassembly.{Identitities => wanme}
@@ -60,7 +61,8 @@ object FunctionEmitter {
       paramDefs: List[ParamDef],
       restParam: Option[ParamDef],
       body: Tree,
-      resultType: Type
+      resultType: Type,
+      coreSpec: CoreSpec
   )(implicit ctx: WasmContext, pos: Position): Unit = {
     val emitter = prepareEmitter(
       functionID,
@@ -71,7 +73,8 @@ object FunctionEmitter {
       hasNewTarget = false,
       receiverType,
       paramDefs ::: restParam.toList,
-      transformResultType(resultType)
+      transformResultType(resultType),
+      coreSpec
     )
     emitter.genBody(body, resultType)
     emitter.fb.buildAndAddToModule()
@@ -83,7 +86,8 @@ object FunctionEmitter {
       postSuperStatsFunctionID: wanme.FunctionID,
       enclosingClassName: ClassName,
       jsClassCaptures: List[ParamDef],
-      ctor: JSConstructorDef
+      ctor: JSConstructorDef,
+      coreSpec: CoreSpec
   )(implicit ctx: WasmContext): Unit = {
     implicit val pos = ctor.pos
 
@@ -109,7 +113,8 @@ object FunctionEmitter {
         hasNewTarget = true,
         receiverType = None,
         allCtorParams,
-        List(preSuperEnvType)
+        List(preSuperEnvType),
+        coreSpec
       )
 
       emitter.genBlockStats(ctorBody.beforeSuper) {
@@ -137,7 +142,8 @@ object FunctionEmitter {
         hasNewTarget = true,
         receiverType = None,
         allCtorParams,
-        List(watpe.RefType.anyref) // a js.Array
+        List(watpe.RefType.anyref), // a js.Array
+        coreSpec
       )
       emitter.genBody(JSArrayConstr(ctorBody.superCall.args), AnyType)
       emitter.fb.buildAndAddToModule()
@@ -154,7 +160,8 @@ object FunctionEmitter {
         hasNewTarget = true,
         receiverType = Some(watpe.RefType.anyref),
         allCtorParams,
-        List(watpe.RefType.anyref)
+        List(watpe.RefType.anyref),
+        coreSpec
       )
       emitter.genBody(Block(ctorBody.afterSuper), AnyType)
       emitter.fb.buildAndAddToModule()
@@ -170,7 +177,8 @@ object FunctionEmitter {
       hasNewTarget: Boolean,
       receiverType: Option[watpe.Type],
       paramDefs: List[ParamDef],
-      resultTypes: List[watpe.Type]
+      resultTypes: List[watpe.Type],
+      coreSpec: CoreSpec
   )(implicit ctx: WasmContext, pos: Position): FunctionEmitter = {
     val fb = new FunctionBuilder(ctx.moduleBuilder, functionID, originalName, pos)
 
@@ -238,7 +246,8 @@ object FunctionEmitter {
       enclosingClassName,
       newTargetStorage,
       receiverStorage,
-      fullEnv
+      fullEnv,
+      coreSpec
     )
   }
 
@@ -277,7 +286,8 @@ private class FunctionEmitter private (
     enclosingClassName: Option[ClassName],
     _newTargetStorage: Option[FunctionEmitter.VarStorage.Local],
     _receiverStorage: Option[FunctionEmitter.VarStorage.Local],
-    paramsEnv: FunctionEmitter.Env
+    paramsEnv: FunctionEmitter.Env,
+    coreSpec: CoreSpec
 )(implicit ctx: WasmContext) {
   import FunctionEmitter._
 
@@ -403,6 +413,8 @@ private class FunctionEmitter private (
       case t: JSSuperSelect     => genJSSuperSelect(t)
       case t: JSSuperMethodCall => genJSSuperMethodCall(t)
       case t: JSNewTarget       => genJSNewTarget(t)
+
+      case t: LinkTimeIf        => genLinkTimeIf(t, expectedType)
 
       case _: RecordSelect | _: RecordValue | _: Transient | _: JSSuperConstructorCall =>
         throw new AssertionError(s"Invalid tree: $tree")
@@ -2590,7 +2602,8 @@ private class FunctionEmitter private (
       params,
       restParam,
       body,
-      resultType = AnyType
+      resultType = AnyType,
+      coreSpec
     )(ctx, tree.pos)
 
     markPosition(tree)
@@ -2777,6 +2790,15 @@ private class FunctionEmitter private (
     genReadStorage(newTargetStorage)
 
     AnyType
+  }
+
+
+  private def genLinkTimeIf(tree: LinkTimeIf, expectedType: Type): Type = {
+    if (coreSpec.linkTimeProperties.evaluateLinkTimeTree(tree.cond))
+      genTree(tree.thenp, expectedType)
+    else
+      genTree(tree.elsep, expectedType)
+    expectedType
   }
 
   /*--------------------------------------------------------------------*
