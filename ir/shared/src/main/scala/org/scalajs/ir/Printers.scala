@@ -218,6 +218,22 @@ object Printers {
               printBlock(elsep)
           }
 
+        case LinkTimeIf(cond, thenp, elsep) =>
+          print("linkTimeIf (")
+          print(cond)
+          print(") ")
+
+          printBlock(thenp)
+          elsep match {
+            case Skip() => ()
+            case If(_, _, _) =>
+              print(" else ")
+              print(elsep)
+            case _ =>
+              print(" else ")
+              printBlock(elsep)
+          }
+
         case While(cond, body) =>
           print("while (")
           print(cond)
@@ -1171,6 +1187,38 @@ object Printers {
           print(importSpec)
           print(" fallback ")
           print(globalSpec)
+      }
+    }
+
+    def print(cond: LinkTimeTree): Unit = {
+      import LinkTimeOp._
+      cond match {
+        case LinkTimeTree.BinaryOp(op, lhs, rhs) =>
+          print(lhs)
+          print(" ")
+          print(op match {
+            case Boolean_== => "=="
+            case Boolean_!= => "!="
+            case Boolean_|| => "||"
+            case Boolean_&& => "&&"
+
+            case Int_== => "=="
+            case Int_!= => "!="
+            case Int_<  => "<"
+            case Int_<= => "<="
+            case Int_>  => ">"
+            case Int_>= => ">="
+          })
+          print(" ")
+          print(rhs)
+        case LinkTimeTree.BooleanConst(v) =>
+          if (v) print("true") else print("false")
+        case LinkTimeTree.IntConst(v) =>
+          print(v.toString)
+        case LinkTimeTree.Property(name, _) =>
+          print("prop[")
+          print(name)
+          print("]")
       }
     }
 

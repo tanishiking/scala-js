@@ -5349,6 +5349,18 @@ abstract class GenJSCode[G <: Global with Singleton](val global: G)
         case UNWRAP_FROM_THROWABLE =>
           // js.special.unwrapFromThrowable(arg)
           js.UnwrapFromThrowable(genArgs1)
+
+        case LINKTIME_IF =>
+          // linkingInfo.linkTimeIf(cond, thenp, elsep)
+          assert(args.size == 3,
+              s"Expected exactly 3 arguments for JS primitive $code but got " +
+              s"${args.size} at $pos")
+          val condp = genLinkTimeTree(args(0)).getOrElse {
+            js.LinkTimeTree.BooleanConst(true) // dummy
+          }
+          val thenp = genExpr(args(1))
+          val elsep = genExpr(args(2))
+          js.LinkTimeIf(condp, thenp, elsep)(toIRType(tree.tpe))
       }
     }
 
@@ -6814,6 +6826,117 @@ abstract class GenJSCode[G <: Global with Singleton](val global: G)
         val method = encodeStaticFieldGetterSym(sym)
         js.ApplyStatic(js.ApplyFlags.empty, className, method, Nil)(toIRType(sym.tpe))
       }
+    }
+
+    private def genLinkTimeTree(cond: Tree)(
+        implicit pos: Position): Option[js.LinkTimeTree] = {
+      import js.LinkTimeOp._
+      cond match {
+        case Literal(Constant(b: Boolean)) =>
+          Some(js.LinkTimeTree.BooleanConst(b))
+
+        case Literal(Constant(i: Int)) =>
+          Some(js.LinkTimeTree.IntConst(i))
+
+        case Literal(_) =>
+          reporter.error(cond.pos, s"Invalid literal $cond inside linkTimeIf. " +
+            s"Only boolean and int values can be used in linkTimeIf.")
+          None
+
+        case Ident(name) =>
+          reporter.error(cond.pos, s"Invalid identifier $name inside linkTimeIf. " +
+            s"Only @linkTimeProperty annotated values can be used in linkTimeIf.")
+          None
+
+        // if(!foo()) (...)
+        case Apply(Select(Apply(prop, Nil), nme.UNARY_!), Nil) =>
+          getLinkTimeProperty(prop).map { p =>
+            js.LinkTimeTree.BinaryOp(
+              Boolean_==, p, js.LinkTimeTree.BooleanConst(false))
+          }.orElse {
+            reporter.error(prop.pos, s"Invalid identifier inside linkTimeIf. " +
+              s"Only @linkTimeProperty annotated values can be used in linkTimeIf.")
+            None
+          }
+
+        // if(foo()) (...)
+        case Apply(prop, Nil) =>
+          getLinkTimeProperty(prop).orElse {
+            reporter.error(prop.pos, s"Invalid identifier inside linkTimeIf. " +
+              s"Only @linkTimeProperty annotated values can be used in linkTimeIf.")
+            None
+          }
+
+        // if(lhs <comp> rhs) (...)
+        case Apply(Select(cond1, comp), List(cond2))
+            if comp != nme.ZAND && comp != nme.ZOR =>
+          (genLinkTimeTree(cond1), genLinkTimeTree(cond2)) match {
+            case (Some(c1), Some(c2)) =>
+              (if (c1.tpe == jstpe.IntType) {
+                comp match {
+                  case nme.EQ => Some(Int_==)
+                  case nme.NE => Some(Int_!=)
+                  case nme.GT => Some(Int_>)
+                  case nme.GE => Some(Int_>=)
+                  case nme.LT => Some(Int_<)
+                  case nme.LE => Some(Int_<=)
+                  case _      =>
+                    reporter.error(cond.pos, s"Invalid operation '$comp' inside linkTimeIf. " +
+                      "Only '==', '!=', '>', '>=', '<', '<=' " +
+                      "operations are allowed for integer values in linkTimeIf.")
+                    None
+                }
+              } else if (c1.tpe == jstpe.BooleanType) {
+                comp match {
+                  case nme.EQ => Some(Boolean_==)
+                  case nme.NE => Some(Boolean_!=)
+                  case _      =>
+                    reporter.error(cond.pos, s"Invalid operation '$comp' inside linkTimeIf. " +
+                      s"Only '==' and '!=' operations are allowed for boolean values in linkTimeIf.")
+                    None
+                }
+              } else {
+                reporter.error(cond.pos, s"Invalid lhs type '${c1.tpe}'")
+                None
+              }).map { op =>
+                js.LinkTimeTree.BinaryOp(op, c1, c2)
+              }
+            case _ =>
+              None
+          }
+
+        // if(cond1 {&&,||} cond2) (...)
+        case Apply(Select(cond1, op), List(cond2)) if op == nme.ZAND || op == nme.ZOR =>
+          (genLinkTimeTree(cond1), genLinkTimeTree(cond2)) match {
+            case (Some(c1), Some(c2)) =>
+              val linkTimeOp = (op: @unchecked) match {
+                case nme.ZAND => Boolean_&&
+                case nme.ZOR  => Boolean_||
+              }
+              Some(js.LinkTimeTree.BinaryOp(linkTimeOp, c1, c2))
+            case _ =>
+              None
+          }
+
+        case t =>
+          reporter.error(t.pos, s"Only @linkTimeProperty annotated values, int and boolean constants, " +
+            "and binary operations are allowd in linkTimeIf.")
+          None
+      }
+    }
+  }
+
+  private def getLinkTimeProperty(tree: Tree): Option[js.LinkTimeTree.Property] = {
+    if (tree.symbol == null) None
+    else {
+      tree.symbol.getAnnotation(LinkTimePropertyAnnotation)
+        .flatMap(_.args.headOption)
+        .flatMap {
+          case Literal(Constant(v: String)) =>
+            Some(js.LinkTimeTree.Property(
+              v, toIRType(tree.symbol.tpe.resultType))(tree.pos))
+          case _ => None
+        }
     }
   }
 
