@@ -75,6 +75,23 @@ class LinkTimeIfTest extends JSASTTest with TestHelpers {
         ), _, _
       ) =>
     }
+
+    s"""
+    $preamble
+    object A {
+      def foo = {
+        linkTimeIf(!(esVersion >= ESVersion.ES2015)) { "prod" } { "dev" }
+      }
+    }
+    """.hasExactly(1, "LinkTimeIf whose condition checks lhs is false") {
+      case js.LinkTimeIf(
+        BinaryOp(
+          Boolean_==,
+          _,
+          BooleanConst(false)
+        ), _, _
+      ) =>
+    }
   }
 
   @Test
