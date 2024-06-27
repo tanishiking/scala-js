@@ -225,15 +225,8 @@ object Printers {
           print(") ")
 
           printBlock(thenp)
-          elsep match {
-            case Skip() => ()
-            case If(_, _, _) =>
-              print(" else ")
-              print(elsep)
-            case _ =>
-              print(" else ")
-              printBlock(elsep)
-          }
+          print(" else ")
+          printBlock(elsep)
 
         case While(cond, body) =>
           print("while (")
