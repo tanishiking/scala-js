@@ -6934,17 +6934,14 @@ abstract class GenJSCode[G <: Global with Singleton](val global: G)
   }
 
   private def getLinkTimeProperty(tree: Tree): Option[js.LinkTimeTree.Property] = {
-    if (tree.symbol == null) None
-    else {
-      tree.symbol.getAnnotation(LinkTimePropertyAnnotation)
-        .flatMap(_.args.headOption)
-        .flatMap {
-          case Literal(Constant(v: String)) =>
-            Some(js.LinkTimeTree.Property(v, toIRType(tree.symbol.tpe.resultType))(tree.pos))
-          case _ => None
-        }
+    tree.symbol.getAnnotation(LinkTimePropertyAnnotation)
+      .flatMap(_.args.headOption)
+      .flatMap {
+        case Literal(Constant(v: String)) =>
+          Some(js.LinkTimeTree.Property(v, toIRType(tree.symbol.tpe.resultType))(tree.pos))
+        case _ => None
+      }
     }
-  }
 
   private lazy val hasNewCollections =
     !scala.util.Properties.versionNumberString.startsWith("2.12.")
