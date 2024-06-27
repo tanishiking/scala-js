@@ -6872,8 +6872,7 @@ abstract class GenJSCode[G <: Global with Singleton](val global: G)
           }
 
         // if(lhs <comp> rhs) (...)
-        case Apply(Select(cond1, comp), List(cond2))
-            if comp != nme.ZAND && comp != nme.ZOR =>
+        case Apply(Select(cond1, comp), List(cond2)) =>
           (genLinkTimeTree(cond1), genLinkTimeTree(cond2)) match {
             case (Some(c1), Some(c2)) =>
               (if (c1.tpe == jstpe.IntType) {
@@ -6893,12 +6892,14 @@ abstract class GenJSCode[G <: Global with Singleton](val global: G)
                 }
               } else if (c1.tpe == jstpe.BooleanType) {
                 comp match {
-                  case nme.EQ => Some(Boolean_==)
-                  case nme.NE => Some(Boolean_!=)
+                  case nme.EQ   => Some(Boolean_==)
+                  case nme.NE   => Some(Boolean_!=)
+                  case nme.ZAND => Some(Boolean_&&)
+                  case nme.ZOR  => Some(Boolean_||)
                   case _      =>
                     reporter.error(cond.pos,
                         s"Invalid operation '$comp' inside linkTimeIf. " +
-                        s"Only '==' and '!=' operations are allowed for boolean values in linkTimeIf.")
+                        "Only '==', '!=', '&&', and '||' operations are allowed for boolean values in linkTimeIf.")
                     None
                 }
               } else {
@@ -6907,21 +6908,7 @@ abstract class GenJSCode[G <: Global with Singleton](val global: G)
               }).map { op =>
                 js.LinkTimeTree.BinaryOp(op, c1, c2)
               }
-            case _ =>
-              None
-          }
-
-        // if(cond1 {&&,||} cond2) (...)
-        case Apply(Select(cond1, op), List(cond2)) if op == nme.ZAND || op == nme.ZOR =>
-          (genLinkTimeTree(cond1), genLinkTimeTree(cond2)) match {
-            case (Some(c1), Some(c2)) =>
-              val linkTimeOp = (op: @unchecked) match {
-                case nme.ZAND => Boolean_&&
-                case nme.ZOR  => Boolean_||
-              }
-              Some(js.LinkTimeTree.BinaryOp(linkTimeOp, c1, c2))
-            case _ =>
-              None
+            case _ => None
           }
 
         case t =>
