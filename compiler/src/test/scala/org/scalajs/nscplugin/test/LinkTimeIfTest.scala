@@ -204,7 +204,7 @@ class LinkTimeIfTest extends JSASTTest with TestHelpers {
     }
     """ hasErrors
     """
-      |newSource1.scala:4: error: Invalid operation '$bar' inside linkTimeIf. Only '==' and '!=' operations are allowed for boolean values in linkTimeIf.
+      |newSource1.scala:4: error: Invalid operation '$bar' inside linkTimeIf. Only '==', '!=', '&&', and '||' operations are allowed for boolean values in linkTimeIf.
       |        linkTimeIf(productionMode | true) { } { }
       |                                  ^
     """
