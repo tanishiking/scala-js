@@ -1012,26 +1012,29 @@ object Serializers {
     }
 
     def writeLinkTimeTree(cond: LinkTimeTree): Unit = {
+      import buffer._
+
+      def writeTagAndPos(tag: Int) = {
+        writeByte(tag)
+        writePosition(cond.pos)
+      }
+
       cond match {
         case LinkTimeTree.Property(name, tpe) =>
-          buffer.writeByte(TagLinkTimeProperty)
+          writeTagAndPos(TagLinkTimeProperty)
           writeString(name)
           writeType(tpe)
-          writePosition(cond.pos)
         case LinkTimeTree.BooleanConst(v) =>
-          buffer.writeByte(TagLinkTimeBooleanConst)
-          buffer.writeBoolean(v)
-          writePosition(cond.pos)
+          writeTagAndPos(TagLinkTimeBooleanConst)
+          writeBoolean(v)
         case LinkTimeTree.IntConst(v) =>
-          buffer.writeByte(TagLinkTimeIntConst)
-          buffer.writeInt(v)
-          writePosition(cond.pos)
+          writeTagAndPos(TagLinkTimeIntConst)
+          writeInt(v)
         case LinkTimeTree.BinaryOp(op, lhs, rhs) =>
-          buffer.writeByte(TagLinkTimeTreeBinary)
-          buffer.writeByte(op)
+          writeTagAndPos(TagLinkTimeTreeBinary)
+          writeByte(op)
           writeLinkTimeTree(lhs)
           writeLinkTimeTree(rhs)
-          writePosition(cond.pos)
       }
     }
   }
@@ -2135,19 +2138,21 @@ object Serializers {
     }
 
     private def readLinkTimeTree(): LinkTimeTree = {
-      readByte() match {
+      val tag = readByte()
+      implicit val pos = readPosition()
+      tag match {
         case TagLinkTimeTreeBinary =>
           LinkTimeTree.BinaryOp(
             readByte(),
             readLinkTimeTree(),
             readLinkTimeTree()
-          )(readPosition())
+          )
         case TagLinkTimeProperty =>
-          LinkTimeTree.Property(readString(), readType())(readPosition())
+          LinkTimeTree.Property(readString(), readType())
         case TagLinkTimeIntConst =>
-          LinkTimeTree.IntConst(readInt())(readPosition())
+          LinkTimeTree.IntConst(readInt())
         case TagLinkTimeBooleanConst =>
-          LinkTimeTree.BooleanConst(readBoolean())(readPosition())
+          LinkTimeTree.BooleanConst(readBoolean())
       }
     }
   }
