@@ -93,4 +93,3 @@ trait JQuery extends js.Object {
 
   def appendTo(parent: JQuery): JQuery = js.native
 }
-

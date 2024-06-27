@@ -127,6 +127,7 @@ private[ir] object Tags {
   final val TagWrapAsThrowable = TagJSNewTarget + 1
   final val TagUnwrapFromThrowable = TagWrapAsThrowable + 1
 
+  // New in 1.17
 
   final val TagLinkTimeIf = TagUnwrapFromThrowable + 1
 

@@ -6839,31 +6839,35 @@ abstract class GenJSCode[G <: Global with Singleton](val global: G)
           Some(js.LinkTimeTree.IntConst(i))
 
         case Literal(_) =>
-          reporter.error(cond.pos, s"Invalid literal $cond inside linkTimeIf. " +
-            s"Only boolean and int values can be used in linkTimeIf.")
+          reporter.error(cond.pos,
+              s"Invalid literal $cond inside linkTimeIf. " +
+              "Only boolean and int values can be used in linkTimeIf.")
           None
 
         case Ident(name) =>
-          reporter.error(cond.pos, s"Invalid identifier $name inside linkTimeIf. " +
-            s"Only @linkTimeProperty annotated values can be used in linkTimeIf.")
+          reporter.error(cond.pos,
+              s"Invalid identifier $name inside linkTimeIf. " +
+              "Only @linkTimeProperty annotated values can be used in linkTimeIf.")
           None
 
         // if(!foo()) (...)
         case Apply(Select(Apply(prop, Nil), nme.UNARY_!), Nil) =>
           getLinkTimeProperty(prop).map { p =>
             js.LinkTimeTree.BinaryOp(
-              Boolean_==, p, js.LinkTimeTree.BooleanConst(false))
+                Boolean_==, p, js.LinkTimeTree.BooleanConst(false))
           }.orElse {
-            reporter.error(prop.pos, s"Invalid identifier inside linkTimeIf. " +
-              s"Only @linkTimeProperty annotated values can be used in linkTimeIf.")
+            reporter.error(prop.pos,
+                s"Invalid identifier inside linkTimeIf. " +
+                s"Only @linkTimeProperty annotated values can be used in linkTimeIf.")
             None
           }
 
         // if(foo()) (...)
         case Apply(prop, Nil) =>
           getLinkTimeProperty(prop).orElse {
-            reporter.error(prop.pos, s"Invalid identifier inside linkTimeIf. " +
-              s"Only @linkTimeProperty annotated values can be used in linkTimeIf.")
+            reporter.error(prop.pos,
+                s"Invalid identifier inside linkTimeIf. " +
+                "Only @linkTimeProperty annotated values can be used in linkTimeIf.")
             None
           }
 
@@ -6881,9 +6885,10 @@ abstract class GenJSCode[G <: Global with Singleton](val global: G)
                   case nme.LT => Some(Int_<)
                   case nme.LE => Some(Int_<=)
                   case _      =>
-                    reporter.error(cond.pos, s"Invalid operation '$comp' inside linkTimeIf. " +
-                      "Only '==', '!=', '>', '>=', '<', '<=' " +
-                      "operations are allowed for integer values in linkTimeIf.")
+                    reporter.error(cond.pos,
+                        s"Invalid operation '$comp' inside linkTimeIf. " +
+                        "Only '==', '!=', '>', '>=', '<', '<=' " +
+                        "operations are allowed for integer values in linkTimeIf.")
                     None
                 }
               } else if (c1.tpe == jstpe.BooleanType) {
@@ -6891,8 +6896,9 @@ abstract class GenJSCode[G <: Global with Singleton](val global: G)
                   case nme.EQ => Some(Boolean_==)
                   case nme.NE => Some(Boolean_!=)
                   case _      =>
-                    reporter.error(cond.pos, s"Invalid operation '$comp' inside linkTimeIf. " +
-                      s"Only '==' and '!=' operations are allowed for boolean values in linkTimeIf.")
+                    reporter.error(cond.pos,
+                        s"Invalid operation '$comp' inside linkTimeIf. " +
+                        s"Only '==' and '!=' operations are allowed for boolean values in linkTimeIf.")
                     None
                 }
               } else {
@@ -6919,8 +6925,9 @@ abstract class GenJSCode[G <: Global with Singleton](val global: G)
           }
 
         case t =>
-          reporter.error(t.pos, s"Only @linkTimeProperty annotated values, int and boolean constants, " +
-            "and binary operations are allowd in linkTimeIf.")
+          reporter.error(t.pos,
+              s"Only @linkTimeProperty annotated values, int and boolean constants, " +
+              "and binary operations are allowd in linkTimeIf.")
           None
       }
     }
@@ -6933,8 +6940,7 @@ abstract class GenJSCode[G <: Global with Singleton](val global: G)
         .flatMap(_.args.headOption)
         .flatMap {
           case Literal(Constant(v: String)) =>
-            Some(js.LinkTimeTree.Property(
-              v, toIRType(tree.symbol.tpe.resultType))(tree.pos))
+            Some(js.LinkTimeTree.Property(v, toIRType(tree.symbol.tpe.resultType))(tree.pos))
           case _ => None
         }
     }
