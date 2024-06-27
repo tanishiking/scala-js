@@ -70,7 +70,7 @@ abstract class JSPrimitives {
   final val UNWRAP_FROM_THROWABLE = WRAP_AS_THROWABLE + 1 // js.special.unwrapFromThrowable
   final val DEBUGGER = UNWRAP_FROM_THROWABLE + 1          // js.special.debugger
 
-  final val LINKTIME_IF = DEBUGGER + 1                   // LinkingInfo.linkTimeIf
+  final val LINKTIME_IF = DEBUGGER + 1 // LinkingInfo.linkTimeIf
 
   final val LastJSPrimitiveCode = LINKTIME_IF
 

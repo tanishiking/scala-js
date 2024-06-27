@@ -177,15 +177,18 @@ object Trees {
   }
 
   object LinkTimeTree {
-    final case class BinaryOp(op: LinkTimeOp.Code, lhs: LinkTimeTree,
-        rhs: LinkTimeTree)(implicit val pos: Position) extends LinkTimeTree {
-            val tpe = BooleanType
-        }
+    final case class BinaryOp(op: LinkTimeOp.Code, lhs: LinkTimeTree, rhs: LinkTimeTree)(
+        implicit val pos: Position) extends LinkTimeTree {
+      val tpe = BooleanType
+    }
+
     final case class Property(name: String, tpe: Type)(implicit val pos: Position)
       extends LinkTimeTree
+
     final case class IntConst(v: Int)(implicit val pos: Position) extends LinkTimeTree {
       val tpe = IntType
     }
+
     final case class BooleanConst(v: Boolean)(implicit val pos: Position) extends LinkTimeTree {
       val tpe = BooleanType
     }
