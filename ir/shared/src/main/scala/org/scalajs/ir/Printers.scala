@@ -134,6 +134,7 @@ object Printers {
         case node: MemberDef         => print(node)
         case node: JSConstructorBody => printBlock(node.allStats)
         case node: TopLevelExportDef => print(node)
+        case node: LinkTimeTree      => print(node)
       }
     }
 

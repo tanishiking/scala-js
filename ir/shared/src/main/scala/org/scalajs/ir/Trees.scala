@@ -171,7 +171,7 @@ object Trees {
   sealed case class LinkTimeIf(val cond: LinkTimeTree, val thenp: Tree,
       val elsep: Tree)(val tpe: Type)(implicit val pos: Position) extends Tree
 
-  sealed abstract class LinkTimeTree {
+  sealed abstract class LinkTimeTree extends IRNode {
     val pos: Position
     val tpe: Type
   }
