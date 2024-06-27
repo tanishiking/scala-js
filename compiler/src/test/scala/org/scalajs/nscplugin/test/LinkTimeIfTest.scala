@@ -34,7 +34,7 @@ class LinkTimeIfTest extends JSASTTest with TestHelpers {
           linkTimeIf($const) { } { }
         }
       }
-      """.hasExactly(1, s"linkTimeIf($const) should compile to LinkTimeIf($expected)") {
+      """.hasExactly(1, "LinkTimeIf with boolean constant") {
         case js.LinkTimeIf(BooleanConst(expected), _, _) =>
       }
     }
@@ -51,7 +51,7 @@ class LinkTimeIfTest extends JSASTTest with TestHelpers {
         linkTimeIf(productionMode) { "prod" } { "dev" }
       }
     }
-    """.hasExactly(1, "linkTimeIf(x) should compiles to LinkTimeIf(prop[x])") {
+    """.hasExactly(1, "LinkTimeIf with a property refers core/productionMode") {
       case js.LinkTimeIf(
         Property("core/productionMode", jstpe.BooleanType), _, _) =>
     }
@@ -66,7 +66,7 @@ class LinkTimeIfTest extends JSASTTest with TestHelpers {
         linkTimeIf(!productionMode) { "prod" } { "dev" }
       }
     }
-    """.hasExactly(1, "linkTimeIf(!x) should compile to LinkTimeIf(prop[x] == false)") {
+    """.hasExactly(1, "LinkTimeIf whose condition checks productionMode is false") {
       case js.LinkTimeIf(
         BinaryOp(
           Boolean_==,
@@ -87,7 +87,7 @@ class LinkTimeIfTest extends JSASTTest with TestHelpers {
           linkTimeIf(esVersion $opStr ESVersion.ES2015 ) { } { }
         }
       }
-      """.hasExactly(1, s"linkTimeIf(... $opStr ...) should compile to LinkTimeIf(... $opStr ...)") {
+      """.hasExactly(1, s"LinkTimeIf compares esVersion using '$opStr'") {
         case js.LinkTimeIf(
           BinaryOp(
             op,
@@ -115,7 +115,7 @@ class LinkTimeIfTest extends JSASTTest with TestHelpers {
           linkTimeIf(productionMode && esVersion >= ESVersion.ES2015 ) { } { }
         }
       }
-      """.hasExactly(1, s"linkTimeIf(... $op ...) should compile to LinkTimeIf(... $op ...)") {
+      """.hasExactly(1, s"LinkTimeIf with nested condition") {
         case js.LinkTimeIf(
           js.LinkTimeTree.BinaryOp(
             expected,
@@ -142,7 +142,7 @@ class LinkTimeIfTest extends JSASTTest with TestHelpers {
         linkTimeIf(productionMode == (productionMode && productionMode)) { } { }
       }
     }
-    """.hasExactly(1, s"LinkTimeIf nested condition should compile") {
+    """.hasExactly(1, s"LinkTimeIf with nested condition") {
       case js.LinkTimeIf(
         js.LinkTimeTree.BinaryOp(
           Boolean_==,
@@ -167,7 +167,7 @@ class LinkTimeIfTest extends JSASTTest with TestHelpers {
         ) { } { }
       }
     }
-    """.hasExactly(1, s"LinkTimeIf nested condition should compile") {
+    """.hasExactly(1, s"LinkTimeIf with nested condition") {
       case js.LinkTimeIf(
         js.LinkTimeTree.BinaryOp(
           Boolean_||,
