@@ -1178,6 +1178,14 @@ object Serializers {
 
         case TagReturn  => Return(readTree(), readLabelIdent())
         case TagIf      => If(readTree(), readTree(), readTree())(readType())
+
+        case TagLinkTimeIf =>
+          val linkTimeCond = readLinkTimeTree()
+          val thenp = readTree()
+          val elsep = readTree()
+          val tpe = readType()
+          LinkTimeIf(linkTimeCond, thenp, elsep)(tpe)
+
         case TagWhile   => While(readTree(), readTree())
 
         case TagDoWhile =>
@@ -1339,13 +1347,6 @@ object Serializers {
 
         case TagCreateJSClass =>
           CreateJSClass(readClassName(), readTrees())
-
-        case TagLinkTimeIf =>
-          val linkTimeCond = readLinkTimeTree()
-          val thenp = readTree()
-          val elsep = readTree()
-          val tpe = readType()
-          LinkTimeIf(linkTimeCond, thenp, elsep)(tpe)
       }
     }
 
