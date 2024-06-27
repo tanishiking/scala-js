@@ -6850,16 +6850,10 @@ abstract class GenJSCode[G <: Global with Singleton](val global: G)
               "Only @linkTimeProperty annotated values can be used in linkTimeIf.")
           None
 
-        // if(!foo()) (...)
-        case Apply(Select(Apply(prop, Nil), nme.UNARY_!), Nil) =>
-          getLinkTimeProperty(prop).map { p =>
-            js.LinkTimeTree.BinaryOp(
-                Boolean_==, p, js.LinkTimeTree.BooleanConst(false))
-          }.orElse {
-            reporter.error(prop.pos,
-                s"Invalid identifier inside linkTimeIf. " +
-                s"Only @linkTimeProperty annotated values can be used in linkTimeIf.")
-            None
+        // !x
+        case Apply(Select(t, nme.UNARY_!), Nil) =>
+          genLinkTimeTree(t).map { lt =>
+            js.LinkTimeTree.BinaryOp(Boolean_==, lt, js.LinkTimeTree.BooleanConst(false))
           }
 
         // if(foo()) (...)
