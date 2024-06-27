@@ -12,8 +12,7 @@
 
 package org.scalajs.testsuite.library
 
-import scala.scalajs.LinkingInfo
-import scala.scalajs.LinkingInfo.ESVersion
+import scala.scalajs.LinkingInfo._
 
 import org.junit.Test
 import org.junit.Assert._
@@ -22,33 +21,76 @@ import org.junit.Assume._
 import org.scalajs.testsuite.utils.Platform
 
 class LinkTimeIfTest {
-  @Test def linkTimeIfBasic(): Unit = {
+  @Test def linkTimeIfConst(): Unit = {
     // boolean const
-    LinkingInfo.linkTimeIf(true) { /* ok */ } { fail() }
-    LinkingInfo.linkTimeIf(false) { fail() } { /* ok */ }
+    linkTimeIf(true) { /* ok */ } { fail() }
+    linkTimeIf(false) { fail() } { /* ok */ }
+  }
 
-    // boolean property
-    LinkingInfo.linkTimeIf(LinkingInfo.productionMode) {
-      if (Platform.isInProductionMode) { /* ok */ }
-      else fail()
-    } {
-      if (!Platform.isInProductionMode) { /* ok */ }
-      else fail()
-    }
-    LinkingInfo.linkTimeIf(!LinkingInfo.productionMode) {
-      if (!Platform.isInProductionMode) { /* ok */ }
-      else fail()
-    } {
-      if (Platform.isInProductionMode) { /* ok */ }
-      else fail()
+  @Test def linkTimeIfProp(): Unit = {
+    locally {
+      val cond = Platform.isInProductionMode
+      linkTimeIf(productionMode) {
+        assertTrue(cond)
+      } {
+        assertFalse(cond)
+      }
     }
 
-    // integer property
-    // should be always true because ES5_1 is the oldest version we support
-    LinkingInfo.linkTimeIf(LinkingInfo.esVersion >= ESVersion.ES5_1) {
-      /* ok */
-    } {
-      fail()
+    locally {
+      val cond = !Platform.isInProductionMode
+      linkTimeIf(!productionMode) {
+        assertTrue(cond)
+      } {
+        assertFalse(cond)
+      }
+    }
+  }
+
+  @Test def linkTimIfIntProp(): Unit = {
+    locally {
+      val cond = Platform.assumedESVersion >= ESVersion.ES2015
+      linkTimeIf(esVersion >= ESVersion.ES2015) {
+        assertTrue(cond)
+      } {
+        assertFalse(cond)
+      }
+    }
+
+    locally {
+      val cond = !(Platform.assumedESVersion < ESVersion.ES2015)
+      linkTimeIf(!(esVersion < ESVersion.ES2015)) {
+        assertTrue(cond)
+      } {
+        assertFalse(cond)
+      }
+    }
+  }
+
+  @Test def linkTimeIfNested(): Unit = {
+    locally {
+      val cond =
+        Platform.isInProductionMode &&
+        Platform.assumedESVersion >= ESVersion.ES2015
+      linkTimeIf(productionMode && esVersion >= ESVersion.ES2015) {
+        assertTrue(cond)
+      } {
+        assertFalse(cond)
+      }
+    }
+
+    locally {
+      val cond =
+        Platform.assumedESVersion >= ESVersion.ES2015 &&
+        Platform.assumedESVersion < ESVersion.ES2019 &&
+        Platform.isInProductionMode
+
+      linkTimeIf(esVersion >= ESVersion.ES2015 &&
+          esVersion < ESVersion.ES2019 && productionMode) {
+        assertTrue(cond)
+      } {
+        assertFalse(cond)
+      }
     }
   }
 }
