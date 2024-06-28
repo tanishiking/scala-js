@@ -6850,7 +6850,7 @@ abstract class GenJSCode[G <: Global with Singleton](val global: G)
           dummy
 
         // !x
-        case Apply(Select(t, nme.UNARY_!), Nil) =>
+        case Apply(Select(t, nme.UNARY_!), Nil) if cond.symbol == definitions.Boolean_not =>
           val lt = genLinkTimeTree(t)
           js.LinkTimeTree.BinaryOp(Boolean_==, lt, js.LinkTimeTree.BooleanConst(false))
 
