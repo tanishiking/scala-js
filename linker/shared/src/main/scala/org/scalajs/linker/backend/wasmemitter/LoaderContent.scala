@@ -328,11 +328,11 @@ export function load(wasmFileURL, importedModules, exportSetters) {
     const wasmPath = import("node:url").then((url) => url.fileURLToPath(resolvedURL))
     wasmModulePromise = import("node:fs").then((fs) => {
       return wasmPath.then((path) => {
-        return WebAssembly.instantiate(fs.readFileSync(path), importsObj);
+        return WebAssembly.instantiate(fs.readFileSync(path), importsObj, { builtins: ['js-string'] });
       });
     });
   } else {
-    wasmModulePromise = WebAssembly.instantiateStreaming(fetch(resolvedURL), importsObj);
+    wasmModulePromise = WebAssembly.instantiateStreaming(fetch(resolvedURL), importsObj, { builtins: ['js-string'] });
   }
   return wasmModulePromise;
 }

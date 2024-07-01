@@ -2027,7 +2027,16 @@ object Build {
       exampleSettings,
       name := "Hello World - Scala.js example",
       moduleName := "helloworld",
-      scalaJSUseMainModuleInitializer := true
+      scalaJSUseMainModuleInitializer := true,
+      scalaJSLinkerConfig ~= {
+        _.withPrettyPrint(true)
+      },
+      jsEnv := {
+        new NodeJSEnv(
+          NodeJSEnv.Config().withArgs(List("--experimental-wasm-imported-strings"))
+        )
+      },
+
   ).withScalaJSCompiler.dependsOnLibrary
 
   lazy val reversi: MultiScalaProject = MultiScalaProject(
