@@ -147,7 +147,26 @@ object VarGen {
     // js string builtins
 
     case object fromCharCodeArray extends FunctionID
+
+    /**
+      * Copy a string into a pre-allocated mutable i16 array at `start` index.
+      * 
+      * Returns the number of char codes written, which is equal to the length of
+      * the string.
+      * 
+      * Traps if the string doesn't fit into the array.
+      * {{{
+      * func intoCharCodeArray(
+      *   string: externref,
+      *   array: (ref null (array (mut i16))),
+      *   start: i32
+      * ) -> i32
+      * }}}
+      */
     case object intoCharCodeArray extends FunctionID
+
+    case object fromCharCodeArrayWrapper extends FunctionID
+    case object intoCharCodeArrayWrapper extends FunctionID
 
     // JS helpers
 
@@ -156,6 +175,8 @@ object VarGen {
      *  Its `toString()` is guaranteed to correspond to the import name of the helper.
      */
     sealed abstract class JSHelperFunctionID extends FunctionID
+
+    case object print extends JSHelperFunctionID
 
     case object is extends JSHelperFunctionID
 
@@ -284,6 +305,7 @@ object VarGen {
 
     case object createStringFromData extends FunctionID
     case object stringLiteral extends FunctionID
+    case object wasmStringConcat extends JSHelperFunctionID
     case object typeDataName extends FunctionID
     case object createClassOf extends FunctionID
     case object getClassOf extends FunctionID

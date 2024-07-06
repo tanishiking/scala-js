@@ -152,6 +152,13 @@ final class WasmContext(
   def getConstantStringInstr(str: String): List[wa.Instr] =
     getConstantStringDataInstr(str) :+ wa.Call(genFunctionID.stringLiteral)
 
+  def getConstantJSStringInstr(str: String): List[wa.Instr] =
+    getConstantStringDataInstr(str) :+ wa.Call(genFunctionID.stringLiteral) :+
+      wa.Call(genFunctionID.createStringFromData)
+
+  // def printString(str: String): List[wa.Instr] =
+  //   getConstantJSStringInstr(str) :+ wa.Call(genFunctionID.print)
+
   def getConstantStringDataInstr(str: String): List[wa.I32Const] = {
     val data = addConstantStringGlobal(str)
     List(

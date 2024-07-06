@@ -80,6 +80,8 @@ const linkingInfo = Object.freeze({
 });
 
 const scalaJSHelpers = {
+  print: (x) => console.log(JSON.stringify(x)),
+
   // JSTag
   JSTag: WebAssembly.JSTag,
 

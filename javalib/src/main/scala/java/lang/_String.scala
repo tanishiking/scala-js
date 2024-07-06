@@ -250,11 +250,31 @@ final class _String private () // scalastyle:ignore
 
   @inline
   def indexOf(str: String): Int =
-    thisString.jsIndexOf(str)
+    indexOf(str, 0)
 
   @inline
-  def indexOf(str: String, fromIndex: Int): Int =
-    thisString.jsIndexOf(str, fromIndex)
+  def indexOf(str: String, from: Int): Int = {
+    val thisChars = this.toCharArray
+    val strChars = str.toCharArray
+
+    var i = from
+    if (from < 0) i = 0
+
+    val maxIndex = thisChars.length - strChars.length
+
+    if (strChars.length == 0) return maxIndex
+
+    while (i <= maxIndex) {
+      var j = 0
+      while (j < strChars.length && thisChars(i + j) == strChars(j)) {
+        j += 1
+      }
+      if (j == strChars.length) return i
+      i += 1
+    }
+
+    -1
+  }
 
   /* Just returning this string is a valid implementation for `intern` in
    * JavaScript, since strings are primitive values. Therefore, value equality

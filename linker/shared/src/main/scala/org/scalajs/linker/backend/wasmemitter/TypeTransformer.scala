@@ -67,8 +67,11 @@ object TypeTransformer {
   def transformType(tpe: Type)(implicit ctx: WasmContext): watpe.Type = {
     tpe match {
       case AnyType                => watpe.RefType.anyref
+      case ClassType(className) if className == BoxedStringClass =>
+        watpe.RefType.nullable(VarGen.genTypeID.i16Array)
       case ClassType(className)   => transformClassType(className)
-      case StringType | UndefType => watpe.RefType.any
+      case StringType => watpe.RefType.nullable(VarGen.genTypeID.i16Array)
+      case UndefType => watpe.RefType.any
       case tpe: PrimTypeWithRef   => transformPrimType(tpe)
 
       case tpe: ArrayType =>

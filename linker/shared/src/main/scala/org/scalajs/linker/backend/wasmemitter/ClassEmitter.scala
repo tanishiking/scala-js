@@ -766,7 +766,7 @@ class ClassEmitter(coreSpec: CoreSpec) {
         tree match {
           case StringLiteral(value) =>
             // Common shape for all the `nameTree` expressions
-            fb ++= ctx.getConstantStringInstr(value)
+            fb ++= ctx.getConstantJSStringInstr(value)
 
           case VarRef(LocalIdent(localName)) if classCaptureParamsOfTypeAny.contains(localName) =>
             /* Common shape for the `jsSuperClass` value

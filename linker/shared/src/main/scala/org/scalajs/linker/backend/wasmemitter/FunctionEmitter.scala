@@ -458,6 +458,19 @@ private class FunctionEmitter private (
              */
             fb += wa.Call(genFunctionID.box(primType.primRef))
         }
+      case (_, AnyType) =>
+        val tmp = addSyntheticLocal(watpe.RefType.anyref)
+        fb += wa.LocalSet(tmp)
+        fb.block(watpe.RefType.anyref) { labelDone =>
+          fb += wa.LocalGet(tmp)
+          fb += wa.BrOnCastFail(
+            labelDone,
+            watpe.RefType.anyref,
+            watpe.RefType(genTypeID.i16Array)
+          )
+          fb += wa.Call(genFunctionID.createStringFromData)
+        }
+
       case _ =>
         ()
     }
@@ -544,7 +557,7 @@ private class FunctionEmitter private (
         fb += wa.Call(genFunctionID.jsSuperSet)
 
       case assign: JSGlobalRef =>
-        fb ++= ctx.getConstantStringInstr(assign.name)
+        fb ++= ctx.getConstantJSStringInstr(assign.name)
         genTree(t.rhs, AnyType)
         fb += wa.Call(genFunctionID.jsGlobalRefSet)
 
@@ -796,6 +809,7 @@ private class FunctionEmitter private (
           // By spec, toString() is special
           assert(argsLocals.isEmpty)
           fb += wa.Call(genFunctionID.jsValueToString)
+          fb += wa.Call(genFunctionID.intoCharCodeArrayWrapper)
         } else if (receiverClassName == JLNumberClass) {
           // the value must be a `number`, hence we can unbox to `double`
           genUnbox(DoubleType)
@@ -950,6 +964,9 @@ private class FunctionEmitter private (
 
           case Some(primReceiverType) =>
             if (t.receiver.tpe == primReceiverType) {
+              genTreeAuto(t.receiver)
+            } else if (primReceiverType == StringType) {
+              // genTree(..., AnyType) for String makes it into JS string
               genTreeAuto(t.receiver)
             } else {
               genTree(t.receiver, AnyType)
@@ -1161,7 +1178,7 @@ private class FunctionEmitter private (
 
       // String.length, introduced in 1.11
       case String_length =>
-        fb += wa.Call(genFunctionID.stringLength)
+        fb += wa.ArrayLen
     }
 
     unary.tpe
@@ -1348,7 +1365,7 @@ private class FunctionEmitter private (
         genTree(binary.lhs, StringType) // push the string
         genTree(binary.rhs, IntType) // push the index
         markPosition(binary)
-        fb += wa.Call(genFunctionID.stringCharAt)
+        fb += wa.ArrayGetU(genTypeID.i16Array)
         CharType
 
       case _ =>
@@ -1482,7 +1499,9 @@ private class FunctionEmitter private (
               fb += wa.BrOnNonNull(labelDone)
             }
 
-            fb ++= ctx.getConstantStringInstr("null")
+            fb ++= ctx.getConstantJSStringInstr("null")
+            fb += wa.Call(genFunctionID.intoCharCodeArrayWrapper)
+            fb += wa.RefAsNonNull
           }
         } else {
           /* Dispatch where the receiver can be a JS value.
@@ -1501,27 +1520,38 @@ private class FunctionEmitter private (
            * end $done
            */
 
-          fb.block(watpe.RefType.any) { labelDone =>
-            // First try the case where the value is one of our objects
-            fb.block(watpe.RefType.anyref) { labelNotOurObject =>
-              // Load receiver
-              genTreeAuto(tree)
+          fb.block(watpe.RefType(genTypeID.i16Array)) { labelDone =>
+            fb.block(watpe.RefType.anyref) { labelNotOurString =>
+              // First try the case where the value is one of our objects
+              fb.block(watpe.RefType.anyref) { labelNotOurObject =>
+                // Load receiver
+                genTreeAuto(tree)
 
-              markPosition(binary)
+                markPosition(binary)
 
+                fb += wa.BrOnCastFail(
+                  labelNotOurObject,
+                  watpe.RefType.anyref,
+                  watpe.RefType(genTypeID.ObjectStruct)
+                )
+                fb += wa.LocalTee(receiverLocalForDispatch)
+                genTableDispatch(objectClassInfo, toStringMethodName, receiverLocalForDispatch)
+                fb += wa.BrOnNonNull(labelDone)
+                fb += wa.RefNull(watpe.HeapType.Any)
+              } // end block labelNotOurObject
+
+              // Now we have a value that is not one of our objects; the anyref is still on the stack
               fb += wa.BrOnCastFail(
-                labelNotOurObject,
+                labelNotOurString,
                 watpe.RefType.anyref,
-                watpe.RefType(genTypeID.ObjectStruct)
+                watpe.RefType(genTypeID.i16Array)
               )
-              fb += wa.LocalTee(receiverLocalForDispatch)
-              genTableDispatch(objectClassInfo, toStringMethodName, receiverLocalForDispatch)
-              fb += wa.BrOnNonNull(labelDone)
-              fb += wa.RefNull(watpe.HeapType.Any)
-            } // end block labelNotOurObject
+              fb += wa.Br(labelDone)
+            }
 
-            // Now we have a value that is not one of our objects; the anyref is still on the stack
             fb += wa.Call(genFunctionID.jsValueToStringForConcat)
+            fb += wa.Call(genFunctionID.intoCharCodeArrayWrapper)
+            fb += wa.RefAsNonNull
           } // end block labelDone
         }
       }
@@ -1537,19 +1567,26 @@ private class FunctionEmitter private (
               () // no-op
             case BooleanType =>
               fb += wa.Call(genFunctionID.booleanToString)
+              fb += wa.Call(genFunctionID.intoCharCodeArrayWrapper)
             case CharType =>
               fb += wa.Call(genFunctionID.charToString)
+              fb += wa.Call(genFunctionID.intoCharCodeArrayWrapper)
             case ByteType | ShortType | IntType =>
               fb += wa.Call(genFunctionID.intToString)
+              fb += wa.Call(genFunctionID.intoCharCodeArrayWrapper)
             case LongType =>
               fb += wa.Call(genFunctionID.longToString)
+              fb += wa.Call(genFunctionID.intoCharCodeArrayWrapper)
             case FloatType =>
               fb += wa.F64PromoteF32
               fb += wa.Call(genFunctionID.doubleToString)
+              fb += wa.Call(genFunctionID.intoCharCodeArrayWrapper)
             case DoubleType =>
               fb += wa.Call(genFunctionID.doubleToString)
+              fb += wa.Call(genFunctionID.intoCharCodeArrayWrapper)
             case NullType | UndefType =>
               fb += wa.Call(genFunctionID.jsValueToStringForConcat)
+              fb += wa.Call(genFunctionID.intoCharCodeArrayWrapper)
             case NothingType =>
               () // unreachable
             case NoType =>
@@ -1561,7 +1598,7 @@ private class FunctionEmitter private (
           // Common case for which we want to avoid the hijacked class dispatch
           genTreeAuto(tree)
           markPosition(binary)
-          fb += wa.Call(genFunctionID.jsValueToStringForConcat) // for `null`
+          // fb += wa.Call(genFunctionID.jsValueToStringForConcat) // for `null`
 
         case ClassType(className) =>
           genWithDispatch(ctx.getClassInfo(className).isAncestorOfHijackedClass)
@@ -1587,7 +1624,7 @@ private class FunctionEmitter private (
         genToString(binary.lhs)
         genToString(binary.rhs)
         markPosition(binary)
-        fb += wa.Call(genFunctionID.stringConcat)
+        fb += wa.Call(genFunctionID.wasmStringConcat)
     }
 
     StringType
@@ -1603,7 +1640,7 @@ private class FunctionEmitter private (
         case UndefType =>
           fb += wa.Call(genFunctionID.isUndef)
         case StringType =>
-          fb += wa.Call(genFunctionID.isString)
+          fb += wa.RefTest(watpe.RefType(genTypeID.i16Array)) // maybe we should box string into boxed string
 
         case testType: PrimTypeWithRef =>
           testType match {
@@ -1744,6 +1781,8 @@ private class FunctionEmitter private (
             targetWasmType match {
               case watpe.RefType(true, watpe.HeapType.Any) =>
                 () // nothing to do
+              case watpe.RefType(true, watpe.HeapType.Type(genTypeID.i16Array)) =>
+                fb += wa.Call(genFunctionID.intoCharCodeArrayWrapper)
               case targetWasmType: watpe.RefType =>
                 fb += wa.RefCast(targetWasmType)
               case _ =>
@@ -2305,14 +2344,14 @@ private class FunctionEmitter private (
 
   private def genJSGlobalRef(tree: JSGlobalRef): Type = {
     markPosition(tree)
-    fb ++= ctx.getConstantStringInstr(tree.name)
+    fb ++= ctx.getConstantJSStringInstr(tree.name)
     fb += wa.Call(genFunctionID.jsGlobalRefGet)
     AnyType
   }
 
   private def genJSTypeOfGlobalRef(tree: JSTypeOfGlobalRef): Type = {
     markPosition(tree)
-    fb ++= ctx.getConstantStringInstr(tree.globalRef.name)
+    fb ++= ctx.getConstantJSStringInstr(tree.globalRef.name)
     fb += wa.Call(genFunctionID.jsGlobalRefTypeof)
     AnyType
   }

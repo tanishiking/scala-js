@@ -412,6 +412,8 @@ object CoreWasmLib {
       )
     }
 
+    addHelperImport(genFunctionID.print, List(anyref), List())
+
     addHelperImport(genFunctionID.is, List(anyref, anyref), List(Int32))
 
     addHelperImport(genFunctionID.isUndef, List(anyref), List(Int32))
@@ -589,6 +591,7 @@ object CoreWasmLib {
   /** Generates all the non-type definitions of the core Wasm lib. */
   private def genHelperDefinitions()(implicit ctx: WasmContext): Unit = {
     genStringLiteral()
+    genWasmStringConcat()
     genCreateStringFromData()
     genTypeDataName()
     genCreateClassOf()
@@ -606,6 +609,8 @@ object CoreWasmLib {
     genSearchReflectiveProxy()
     genArrayCloneFunctions()
     genJSStringBuiltins()
+    genIntoCharCodeArray()
+    genFromCharCodeArray()
   }
 
   private def newFunctionBuilder(functionID: FunctionID, originalName: OriginalName)(
@@ -623,30 +628,35 @@ object CoreWasmLib {
     val offsetParam = fb.addParam("offset", Int32)
     val sizeParam = fb.addParam("size", Int32)
     val stringIndexParam = fb.addParam("stringIndex", Int32)
-    fb.setResultType(RefType.any)
+    fb.setResultType(RefType(genTypeID.i16Array))
 
-    val str = fb.addLocal("str", RefType.any)
+    // fb += LocalGet(stringIndexParam)
+    fb += LocalGet(offsetParam)
+    fb += LocalGet(sizeParam)
+    fb += ArrayNewData(genTypeID.i16Array, genDataID.string)
 
-    fb.block(RefType.any) { cacheHit =>
-      fb += GlobalGet(genGlobalID.stringLiteralCache)
-      fb += LocalGet(stringIndexParam)
-      fb += ArrayGet(genTypeID.anyArray)
+    // val str = fb.addLocal("str", RefType.any)
 
-      fb += BrOnNonNull(cacheHit)
+    // fb.block(RefType.any) { cacheHit =>
+    //   fb += GlobalGet(genGlobalID.stringLiteralCache)
+    //   fb += LocalGet(stringIndexParam)
+    //   fb += ArrayGet(genTypeID.anyArray)
 
-      // cache miss, create a new string and cache it
-      fb += GlobalGet(genGlobalID.stringLiteralCache)
-      fb += LocalGet(stringIndexParam)
+    //   fb += BrOnNonNull(cacheHit)
 
-      fb += LocalGet(offsetParam)
-      fb += LocalGet(sizeParam)
-      fb += ArrayNewData(genTypeID.i16Array, genDataID.string)
-      fb += Call(genFunctionID.createStringFromData)
-      fb += LocalTee(str)
-      fb += ArraySet(genTypeID.anyArray)
+    //   // cache miss, create a new string and cache it
+    //   fb += GlobalGet(genGlobalID.stringLiteralCache)
+    //   fb += LocalGet(stringIndexParam)
 
-      fb += LocalGet(str)
-    }
+    //   fb += LocalGet(offsetParam)
+    //   fb += LocalGet(sizeParam)
+    //   fb += ArrayNewData(genTypeID.i16Array, genDataID.string)
+    //   fb += Call(genFunctionID.createStringFromData)
+    //   fb += LocalTee(str)
+    //   fb += ArraySet(genTypeID.anyArray)
+
+    //   fb += LocalGet(str)
+    // }
 
     fb.buildAndAddToModule()
   }
@@ -836,6 +846,7 @@ object CoreWasmLib {
           fb += StructGet(genTypeID.typeData, idx)
         }
         fb += Call(genFunctionID.stringLiteral)
+        fb += Call(genFunctionID.createStringFromData)
       }
 
       // typeData.name := <top of stack> ; leave it on the stack
@@ -875,16 +886,16 @@ object CoreWasmLib {
      */
     fb += Call(genFunctionID.jsNewObject)
     // "__typeData": typeData (TODO hide this better? although nobody will notice anyway)
-    fb ++= ctx.getConstantStringInstr("__typeData")
+    fb ++= ctx.getConstantJSStringInstr("__typeData")
     fb += LocalGet(typeDataParam)
     fb += Call(genFunctionID.jsObjectPush)
     // "name": typeDataName(typeData)
-    fb ++= ctx.getConstantStringInstr("name")
+    fb ++= ctx.getConstantJSStringInstr("name")
     fb += LocalGet(typeDataParam)
     fb += Call(genFunctionID.typeDataName)
     fb += Call(genFunctionID.jsObjectPush)
     // "isPrimitive": (typeData.kind <= KindLastPrimitive)
-    fb ++= ctx.getConstantStringInstr("isPrimitive")
+    fb ++= ctx.getConstantJSStringInstr("isPrimitive")
     fb += LocalGet(typeDataParam)
     fb += StructGet(genTypeID.typeData, genFieldID.typeData.kind)
     fb += I32Const(KindLastPrimitive)
@@ -892,7 +903,7 @@ object CoreWasmLib {
     fb += Call(genFunctionID.box(BooleanRef))
     fb += Call(genFunctionID.jsObjectPush)
     // "isArrayClass": (typeData.kind == KindArray)
-    fb ++= ctx.getConstantStringInstr("isArrayClass")
+    fb ++= ctx.getConstantJSStringInstr("isArrayClass")
     fb += LocalGet(typeDataParam)
     fb += StructGet(genTypeID.typeData, genFieldID.typeData.kind)
     fb += I32Const(KindArray)
@@ -900,7 +911,7 @@ object CoreWasmLib {
     fb += Call(genFunctionID.box(BooleanRef))
     fb += Call(genFunctionID.jsObjectPush)
     // "isInterface": (typeData.kind == KindInterface)
-    fb ++= ctx.getConstantStringInstr("isInterface")
+    fb ++= ctx.getConstantJSStringInstr("isInterface")
     fb += LocalGet(typeDataParam)
     fb += StructGet(genTypeID.typeData, genFieldID.typeData.kind)
     fb += I32Const(KindInterface)
@@ -908,31 +919,31 @@ object CoreWasmLib {
     fb += Call(genFunctionID.box(BooleanRef))
     fb += Call(genFunctionID.jsObjectPush)
     // "isInstance": closure(isInstance, typeData)
-    fb ++= ctx.getConstantStringInstr("isInstance")
+    fb ++= ctx.getConstantJSStringInstr("isInstance")
     fb += ctx.refFuncWithDeclaration(genFunctionID.isInstance)
     fb += LocalGet(typeDataParam)
     fb += Call(genFunctionID.closure)
     fb += Call(genFunctionID.jsObjectPush)
     // "isAssignableFrom": closure(isAssignableFrom, typeData)
-    fb ++= ctx.getConstantStringInstr("isAssignableFrom")
+    fb ++= ctx.getConstantJSStringInstr("isAssignableFrom")
     fb += ctx.refFuncWithDeclaration(genFunctionID.isAssignableFromExternal)
     fb += LocalGet(typeDataParam)
     fb += Call(genFunctionID.closure)
     fb += Call(genFunctionID.jsObjectPush)
     // "checkCast": closure(checkCast, typeData)
-    fb ++= ctx.getConstantStringInstr("checkCast")
+    fb ++= ctx.getConstantJSStringInstr("checkCast")
     fb += ctx.refFuncWithDeclaration(genFunctionID.checkCast)
     fb += LocalGet(typeDataParam)
     fb += Call(genFunctionID.closure)
     fb += Call(genFunctionID.jsObjectPush)
     // "getComponentType": closure(getComponentType, typeData)
-    fb ++= ctx.getConstantStringInstr("getComponentType")
+    fb ++= ctx.getConstantJSStringInstr("getComponentType")
     fb += ctx.refFuncWithDeclaration(genFunctionID.getComponentType)
     fb += LocalGet(typeDataParam)
     fb += Call(genFunctionID.closure)
     fb += Call(genFunctionID.jsObjectPush)
     // "newArrayOfThisClass": closure(newArrayOfThisClass, typeData)
-    fb ++= ctx.getConstantStringInstr("newArrayOfThisClass")
+    fb ++= ctx.getConstantJSStringInstr("newArrayOfThisClass")
     fb += ctx.refFuncWithDeclaration(genFunctionID.newArrayOfThisClass)
     fb += LocalGet(typeDataParam)
     fb += Call(genFunctionID.closure)
@@ -1217,10 +1228,10 @@ object CoreWasmLib {
         fb += Drop // drop `value` which was left on the stack
 
         // throw new TypeError("...")
-        fb ++= ctx.getConstantStringInstr("TypeError")
+        fb ++= ctx.getConstantJSStringInstr("TypeError")
         fb += Call(genFunctionID.jsGlobalRefGet)
         fb += Call(genFunctionID.jsNewArray)
-        fb ++= ctx.getConstantStringInstr(
+        fb ++= ctx.getConstantJSStringInstr(
           "Cannot call isInstance() on a Class representing a JS trait/object"
         )
         fb += Call(genFunctionID.jsArrayPush)
@@ -1333,7 +1344,7 @@ object CoreWasmLib {
 
     // load ref.cast<typeData> from["__typeData"] (as a JS selection)
     fb += LocalGet(fromParam)
-    fb ++= ctx.getConstantStringInstr("__typeData")
+    fb ++= ctx.getConstantJSStringInstr("__typeData")
     fb += Call(genFunctionID.jsSelect)
     fb += RefCast(RefType(typeDataType.heapType))
 
@@ -1534,7 +1545,7 @@ object CoreWasmLib {
 
     // lengthsLen := lengths.length // as a JS field access
     fb += LocalGet(lengthsParam)
-    fb ++= ctx.getConstantStringInstr("length")
+    fb ++= ctx.getConstantJSStringInstr("length")
     fb += Call(genFunctionID.jsSelect)
     fb += Call(genFunctionID.unbox(IntRef))
     fb += LocalTee(lengthsLenLocal)
@@ -1975,6 +1986,7 @@ object CoreWasmLib {
         },
         List(JSValueTypeString) -> { () =>
           fb += LocalGet(objNonNullLocal)
+          fb += Call(genFunctionID.intoCharCodeArrayWrapper)
           fb += Call(
             genFunctionID.forMethod(Public, BoxedStringClass, hashCodeMethodName)
           )
@@ -2002,6 +2014,7 @@ object CoreWasmLib {
             fb += LocalGet(objNonNullLocal)
             fb += Call(genFunctionID.symbolDescription)
             fb += BrOnNull(descriptionIsNullLabel)
+            fb += Call(genFunctionID.intoCharCodeArrayWrapper)
             fb += Call(
               genFunctionID.forMethod(Public, BoxedStringClass, hashCodeMethodName)
             )
@@ -2153,11 +2166,11 @@ object CoreWasmLib {
     }
 
     // throw new TypeError("...")
-    fb ++= ctx.getConstantStringInstr("TypeError")
+    fb ++= ctx.getConstantJSStringInstr("TypeError")
     fb += Call(genFunctionID.jsGlobalRefGet)
     fb += Call(genFunctionID.jsNewArray)
     // Originally, exception is thrown from JS saying e.g. "obj2.z1__ is not a function"
-    fb ++= ctx.getConstantStringInstr("Method not found")
+    fb ++= ctx.getConstantJSStringInstr("Method not found")
     fb += Call(genFunctionID.jsArrayPush)
     fb += Call(genFunctionID.jsNew)
     fb += ExternConvertAny
@@ -2238,5 +2251,114 @@ object CoreWasmLib {
 
     fb.buildAndAddToModule()
   }
+
+  // anyref -> (ref null (array (mut 16)))
+  private def genIntoCharCodeArray()(implicit ctx: WasmContext): Unit = {
+    import VarGen.genTypeID.i16Array
+
+    val fb = newFunctionBuilder(genFunctionID.intoCharCodeArrayWrapper)
+    val strParam = fb.addParam("str", RefType.anyref)
+    val result = fb.addLocal("result", RefType.nullable(i16Array))
+    val str = fb.addLocal("str0", RefType.any)
+    fb.setResultType(RefType.nullable(i16Array))
+
+    // fb += LocalGet(strParam)
+    // fb += Call(genFunctionID.print)
+
+    fb.block(RefType.any) { nonNull =>
+      fb += LocalGet(strParam)
+      fb += BrOnNonNull(nonNull)
+      fb += RefNull(HeapType(genTypeID.i16Array))
+      fb += Return
+    }
+
+    fb += LocalTee(str)
+    fb += ExternConvertAny // extern
+
+    // allocate mutable i16 array
+    fb += LocalGet(str)
+    fb += Call(genFunctionID.stringLength) // str.length
+    fb += ArrayNewDefault(genTypeID.i16Array) // (ref null (array (mut i16)))
+    fb += LocalTee(result)
+
+    // start
+    fb += I32Const(0)
+
+    fb += Call(genFunctionID.intoCharCodeArray) // i32 (number of char codes written)
+    fb += Drop
+
+    fb += LocalGet(result)
+
+    fb.buildAndAddToModule()
+  }
+
+  private def genFromCharCodeArray()(implicit ctx: WasmContext): Unit = {
+    import VarGen.genTypeID.i16Array
+
+    val fb = newFunctionBuilder(genFunctionID.fromCharCodeArrayWrapper)
+    val arrayParam = fb.addParam("array", RefType.nullable(i16Array))
+    val res = fb.addLocal("result", RefType.any)
+    fb.setResultType(RefType.any)
+
+    fb += LocalGet(arrayParam)
+
+    // start
+    fb += I32Const(0)
+
+    // end
+    fb += LocalGet(arrayParam)
+    fb += ArrayLen
+
+    fb += Call(genFunctionID.fromCharCodeArray) // (ref extern)
+    fb += AnyConvertExtern // (ref any)
+
+    // fb += LocalTee(res)
+    // fb += Call(genFunctionID.print)
+    // fb += LocalGet(res)
+
+    fb.buildAndAddToModule()
+  }
+
+  private def genWasmStringConcat()(implicit ctx: WasmContext): Unit = {
+    import VarGen.genTypeID.i16Array
+
+    val fb = newFunctionBuilder(genFunctionID.wasmStringConcat)
+    val arr1Param = fb.addParam("arr1", RefType.nullable(i16Array))
+    val arr2Param = fb.addParam("arr2", RefType.nullable(i16Array))
+    val dest = fb.addLocal("result", RefType(i16Array))
+    fb.setResultType(RefType(i16Array))
+
+    // length of concatinated array
+    fb += LocalGet(arr1Param)
+    fb += ArrayLen
+    fb += LocalGet(arr2Param)
+    fb += ArrayLen
+    fb += I32Add
+
+    fb += ArrayNewDefault(i16Array)
+
+    fb += LocalTee(dest) // dest array that will be copied to
+    fb += I32Const(0) // dest_offset
+    fb += LocalGet(arr1Param) // src
+    fb += I32Const(0) // src_offset
+    fb += LocalGet(arr1Param)
+    fb += ArrayLen // size
+    fb += ArrayCopy(i16Array, i16Array)
+
+    fb += LocalGet(dest) // dest
+    fb += LocalGet(arr1Param)
+    fb += ArrayLen // dest_offset
+    fb += LocalGet(arr2Param) // src
+    fb += I32Const(0) // src_offset
+    fb += LocalGet(arr2Param)
+    fb += ArrayLen // size
+    fb += ArrayCopy(i16Array, i16Array)
+
+    fb += LocalGet(dest)
+
+    fb.buildAndAddToModule()
+  }
+
+
 
 }

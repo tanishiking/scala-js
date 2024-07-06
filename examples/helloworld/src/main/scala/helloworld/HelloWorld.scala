@@ -12,6 +12,11 @@ object HelloWorld {
   def main(args: Array[String]): Unit = {
     import js.DynamicImplicits.truthValue
 
+    // js.Dynamic.global.console.log("aaa")
+
+    println("aaa")
+
+    /**
     if (js.typeOf(js.Dynamic.global.document) != "undefined" &&
         js.Dynamic.global.document &&
         js.Dynamic.global.document.getElementById("playground")) {
@@ -20,9 +25,12 @@ object HelloWorld {
       sayHelloFromJQuery()
       sayHelloFromTypedJQuery()
     } else {
-      println("Hello world!")
-    }
+        */
+      // println("Hello world!")
+    // }
   }
+
+  def bar(x: Long): String = x.toString
 
   def sayHelloFromDOM(): Unit = {
     val document = js.Dynamic.global.document

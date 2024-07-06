@@ -278,7 +278,7 @@ final class Emitter(config: Emitter.Config) {
           fb += wa.GlobalGet(genGlobalID.arrayClassITable)
 
           // underlying array of args
-          args.foreach(arg => fb ++= ctx.getConstantStringInstr(arg))
+          args.foreach(arg => fb ++= ctx.getConstantJSStringInstr(arg))
           fb += wa.ArrayNewFixed(genTypeID.anyArray, args.size)
 
           // array object
