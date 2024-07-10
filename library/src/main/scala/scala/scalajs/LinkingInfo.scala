@@ -297,28 +297,29 @@ object LinkingInfo {
 
   /** Link-time conditional branching.
    *
-   * The `linkTimeIf` expression will be evaluated at link-time, and only the
-   * branch that needs to be executed will be linked. The other branch will be
-   * removed during the linking process.
+   *  The `linkTimeIf` expression will be evaluated at link-time, and only the
+   *  branch that needs to be executed will be linked. The other branch will be
+   *  removed during the linking process.
    *
-   * The condition `cond` can be constructed using:
-   * - Symbols annotated with `@LinkTime`
-   * - Integer or boolean constants
-   * - Binary operators that return a boolean value
+   *  The condition `cond` can be constructed using:
+   *  - Symbols annotated with `@LinkTime`
+   *  - Integer or boolean constants
+   *  - Binary operators that return a boolean value
    *
-   * Example usage:
-   * {{{
-   * val result = linkTimeIf(LinkingInfo.productionMode) {
-   *   "production"
-   * } {
-   *   "development"
-   * }
-   * }}}
-   *
-   * In this example, if `LinkingInfo.productionMode` is `true`, the first
-   * branch will be linked, and the second branch will be removed.
-   * Consequently, the runtime code looks like:
-   * {{{ val result = "production" }}}
+   *  Example usage:
+   *  {{{
+   *  def pow(x: Double, y: Double): Double =
+   *    linkTimeIf(esVersion >= ESVersion.ES2016) {
+   *     (x.asInstanceOf[js.Dynamic] ** y.asInstanceOf[js.Dynamic])
+   *       .asInstanceOf[Double]
+   *    } {
+   *      Math.pow(x, y)
+   *    }
+   *  }}}
+   * 
+   *  If `LinkingInfo.esVersion` is `ESVersion.ES2016` or later,
+   *  the first branch will be linked and the second branch will be removed,
+   *  regardless of whether the optimizer is enabled.
    */
   def linkTimeIf[T](cond: Boolean)(thenp: T)(elsep: T): T =
     throw new Error("stub")
