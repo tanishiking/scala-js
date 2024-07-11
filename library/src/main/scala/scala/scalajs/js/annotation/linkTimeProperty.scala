@@ -26,6 +26,4 @@ package scala.scalajs.js.annotation
  *  @see [[LinkingInfo.linkTimeIf]]
  *  @see [[LinkTimeProperties]]
  */
-private[scalajs] class linkTimeProperty extends scala.annotation.StaticAnnotation {
-  def this(name: String) = this()
-}
+private[scalajs] class linkTimeProperty(name: String) extends scala.annotation.StaticAnnotation
