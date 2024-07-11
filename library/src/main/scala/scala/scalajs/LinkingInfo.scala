@@ -302,7 +302,7 @@ object LinkingInfo {
    *  removed during the linking process.
    *
    *  The condition `cond` can be constructed using:
-   *  - Symbols annotated with `@LinkTime`
+   *  - Symbols annotated with `@linkTimeProperty`
    *  - Integer or boolean constants
    *  - Binary operators that return a boolean value
    *
@@ -310,13 +310,13 @@ object LinkingInfo {
    *  {{{
    *  def pow(x: Double, y: Double): Double =
    *    linkTimeIf(esVersion >= ESVersion.ES2016) {
-   *     (x.asInstanceOf[js.Dynamic] ** y.asInstanceOf[js.Dynamic])
-   *       .asInstanceOf[Double]
+   *      (x.asInstanceOf[js.Dynamic] ** y.asInstanceOf[js.Dynamic])
+   *        .asInstanceOf[Double]
    *    } {
    *      Math.pow(x, y)
    *    }
    *  }}}
-   * 
+   *
    *  If `LinkingInfo.esVersion` is `ESVersion.ES2016` or later,
    *  the first branch will be linked and the second branch will be removed,
    *  regardless of whether the optimizer is enabled.

@@ -815,11 +815,12 @@ class AnalyzerTest {
 
     val productionMode = true
 
-    // linkTimeIf(productionMode) {
-    //   this.foo()
-    // } {
-    //   this.bar()
-    // }
+    /* linkTimeIf(productionMode) {
+     *   this.foo()
+     * } {
+     *   this.bar()
+     * }
+     */
     val mainBody = LinkTimeIf(
       LinkTimeTree.BinaryOp(
         LinkTimeOp.Boolean_==,

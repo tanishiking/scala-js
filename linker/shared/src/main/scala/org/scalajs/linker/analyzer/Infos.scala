@@ -487,31 +487,32 @@ object Infos {
   /** Generates the [[MethodInfo]] of a
    *  [[org.scalajs.ir.Trees.MethodDef Trees.MethodDef]].
    */
-  def generateMethodInfo(methodDef: MethodDef, prop: LinkTimeProperties): MethodInfo =
-    new GenInfoTraverser(methodDef.version, prop).generateMethodInfo(methodDef)
+  def generateMethodInfo(methodDef: MethodDef, linkTimeProperties: LinkTimeProperties): MethodInfo =
+    new GenInfoTraverser(methodDef.version, linkTimeProperties).generateMethodInfo(methodDef)
 
   /** Generates the [[ReachabilityInfo]] of a
    *  [[org.scalajs.ir.Trees.JSConstructorDef Trees.JSConstructorDef]].
    */
-  def generateJSConstructorInfo(ctorDef: JSConstructorDef, prop: LinkTimeProperties): ReachabilityInfo =
-    new GenInfoTraverser(ctorDef.version, prop).generateJSConstructorInfo(ctorDef)
+  def generateJSConstructorInfo(ctorDef: JSConstructorDef, linkTimeProperties: LinkTimeProperties): ReachabilityInfo =
+    new GenInfoTraverser(ctorDef.version, linkTimeProperties).generateJSConstructorInfo(ctorDef)
 
   /** Generates the [[ReachabilityInfo]] of a
    *  [[org.scalajs.ir.Trees.JSMethodDef Trees.JSMethodDef]].
    */
-  def generateJSMethodInfo(methodDef: JSMethodDef, prop: LinkTimeProperties): ReachabilityInfo =
-    new GenInfoTraverser(methodDef.version, prop).generateJSMethodInfo(methodDef)
+  def generateJSMethodInfo(methodDef: JSMethodDef, linkTimeProperties: LinkTimeProperties): ReachabilityInfo =
+    new GenInfoTraverser(methodDef.version, linkTimeProperties).generateJSMethodInfo(methodDef)
 
   /** Generates the [[ReachabilityInfo]] of a
    *  [[org.scalajs.ir.Trees.JSPropertyDef Trees.JSPropertyDef]].
    */
-  def generateJSPropertyInfo(propertyDef: JSPropertyDef, prop: LinkTimeProperties): ReachabilityInfo =
-    new GenInfoTraverser(propertyDef.version, prop).generateJSPropertyInfo(propertyDef)
+  def generateJSPropertyInfo(propertyDef: JSPropertyDef, linkTimeProperties: LinkTimeProperties): ReachabilityInfo =
+    new GenInfoTraverser(propertyDef.version, linkTimeProperties).generateJSPropertyInfo(propertyDef)
 
-  def generateJSMethodPropDefInfo(member: JSMethodPropDef, prop: LinkTimeProperties): ReachabilityInfo = member match {
-    case methodDef: JSMethodDef     => generateJSMethodInfo(methodDef, prop)
-    case propertyDef: JSPropertyDef => generateJSPropertyInfo(propertyDef, prop)
-  }
+  def generateJSMethodPropDefInfo(member: JSMethodPropDef, linkTimeProperties: LinkTimeProperties): ReachabilityInfo =
+    member match {
+      case methodDef: JSMethodDef     => generateJSMethodInfo(methodDef, linkTimeProperties)
+      case propertyDef: JSPropertyDef => generateJSPropertyInfo(propertyDef, linkTimeProperties)
+    }
 
   /** Generates the [[MethodInfo]] for the top-level exports. */
   def generateTopLevelExportInfo(enclosingClass: ClassName,

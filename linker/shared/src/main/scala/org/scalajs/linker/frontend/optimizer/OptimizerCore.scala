@@ -663,7 +663,8 @@ private[optimizer] abstract class OptimizerCore(
       case LinkTimeIf(cond, thenp, elsep) =>
         if (config.coreSpec.linkTimeProperties.evaluateLinkTimeTree(cond))
           transform(thenp, isStat)
-        else transform(elsep, isStat)
+        else
+          transform(elsep, isStat)
 
       // Trees that need not be transformed
 

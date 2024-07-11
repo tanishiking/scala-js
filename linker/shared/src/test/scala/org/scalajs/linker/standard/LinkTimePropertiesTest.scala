@@ -37,7 +37,7 @@ class LinkTimePropertiesTest {
   private val esVersion =
     p("core/esVersion", jstpe.IntType)
 
-  private implicit val nopos: Position = Position.NoPosition
+  private implicit val noPos: Position = Position.NoPosition
 
   @Test
   def evaluateLinkTimeTreeConst(): Unit = {

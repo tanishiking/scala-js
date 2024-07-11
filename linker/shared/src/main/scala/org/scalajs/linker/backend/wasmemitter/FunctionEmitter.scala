@@ -414,7 +414,7 @@ private class FunctionEmitter private (
       case t: JSSuperMethodCall => genJSSuperMethodCall(t)
       case t: JSNewTarget       => genJSNewTarget(t)
 
-      case t: LinkTimeIf        => genLinkTimeIf(t, expectedType)
+      case t: LinkTimeIf => genLinkTimeIf(t, expectedType)
 
       case _: RecordSelect | _: RecordValue | _: Transient | _: JSSuperConstructorCall =>
         throw new AssertionError(s"Invalid tree: $tree")
@@ -2791,7 +2791,6 @@ private class FunctionEmitter private (
 
     AnyType
   }
-
 
   private def genLinkTimeIf(tree: LinkTimeIf, expectedType: Type): Type = {
     if (coreSpec.linkTimeProperties.evaluateLinkTimeTree(tree.cond))

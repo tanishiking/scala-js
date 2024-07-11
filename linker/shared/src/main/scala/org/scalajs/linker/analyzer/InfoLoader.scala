@@ -173,8 +173,7 @@ private[analyzer] object InfoLoader {
 
   private def genJSCtorInfo(jsCtor: Option[JSConstructorDef],
       prevJSCtorInfo: Option[Infos.ReachabilityInfo],
-      linkTimeProperties: LinkTimeProperties
-  ): Option[Infos.ReachabilityInfo] = {
+      linkTimeProperties: LinkTimeProperties): Option[Infos.ReachabilityInfo] = {
     jsCtor.map { ctor =>
       prevJSCtorInfo
         .filter(_.version.sameVersion(ctor.version))

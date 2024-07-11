@@ -64,8 +64,7 @@ private[linker] object CoreSpec {
     new CoreSpec(
         semantics = Semantics.Defaults,
         moduleKind = ModuleKind.NoModule,
-        esFeatures = ESFeatures.Defaults
-    )
+        esFeatures = ESFeatures.Defaults)
   }
 
   private[linker] def apply(

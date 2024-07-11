@@ -28,7 +28,7 @@ final class LinkTimeProperties (
     // Must be in sync with the arguments of @linkTimeProperty("...")
     // for the fields in `scala.scalajs.LinkingInfo`.
     "core/productionMode" -> BooleanValue(semantics.productionMode),
-    "core/esVersion"      -> IntValue(esFeatures.esVersion.edition)
+    "core/esVersion" -> IntValue(esFeatures.esVersion.edition)
   )
 
   def evaluateLinkTimeTree(cond: LinkTimeTree): Boolean = {

@@ -16,6 +16,7 @@ import scala.collection.mutable
 import scala.concurrent._
 
 import org.scalajs.linker.analyzer._
+import org.scalajs.linker.checker.ClassDefChecker
 import org.scalajs.linker.interface._
 import org.scalajs.linker.interface.unstable._
 import org.scalajs.linker.CollectionsCompat.MutableMapCompatOps

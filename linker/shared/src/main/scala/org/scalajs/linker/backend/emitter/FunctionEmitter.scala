@@ -2220,7 +2220,8 @@ private[emitter] class FunctionEmitter(sjsGen: SJSGen) {
         case LinkTimeIf(cond, thenp, elsep) =>
           if (linkTimeProperties.evaluateLinkTimeTree(cond))
             transformExpr(thenp, tree.tpe)
-          else transformExpr(elsep, tree.tpe)
+          else
+            transformExpr(elsep, tree.tpe)
 
         // Scala expressions
 

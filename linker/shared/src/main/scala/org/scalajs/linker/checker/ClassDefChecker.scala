@@ -921,11 +921,11 @@ private final class ClassDefChecker(classDef: ClassDef,
       reportError(i"Duplicate label named ${label.name}.")
   }
 
-  private def checkLinkTimeCond(cond: LinkTimeTree)(
+  private def checkLinkTimeCond(tree: LinkTimeTree)(
       implicit ctx: ErrorContext): Unit = {
-    if (cond.tpe != BooleanType)
-      reportError(i"Link time condition must be typed as boolean, but ${cond.tpe} is found.")
-    checkLinkTimeTree(cond)
+    if (tree.tpe != BooleanType)
+      reportError(i"Link time condition must be typed as boolean, but ${tree.tpe} is found.")
+    checkLinkTimeTree(tree)
   }
 
   private def checkLinkTimeTree(cond: LinkTimeTree)(
