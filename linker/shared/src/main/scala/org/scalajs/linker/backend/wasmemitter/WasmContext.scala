@@ -191,7 +191,7 @@ final class WasmContext(
       implicit val ctx = this
 
       val funType = watpe.FunctionType(
-        watpe.RefType.struct :: tpe.paramTypes.map(TypeTransformer.transformLocalType(_)),
+        watpe.RefType.struct :: tpe.paramTypes.map(TypeTransformer.transformParamType(_)),
         TypeTransformer.transformResultType(tpe.resultType)
       )
       val funTypeID = genTypeID.forClosureFunType(tpe)

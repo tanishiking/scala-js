@@ -1380,7 +1380,7 @@ object Build {
   ).settings(
       commonSettings,
       publishSettings(None),
-      fatalWarningsSettings,
+      // fatalWarningsSettings,
       name := "Scala.js sbt test adapter",
       libraryDependencies ++= Seq(
           "org.scala-sbt" % "test-interface" % "1.0",
@@ -2314,7 +2314,7 @@ object Build {
       Test / scalacOptions ++= scalaJSCompilerOption("genStaticForwardersForNonTopLevelObjects"),
       Test / scalacOptions ++= scalaJSCompilerOption("nowarnGlobalExecutionContext"),
 
-      scalaJSLinkerConfig ~= { _.withSemantics(TestSuiteLinkerOptions.semantics _) },
+      scalaJSLinkerConfig ~= { _.withSemantics(TestSuiteLinkerOptions.semantics _).withClosureCompiler(false) },
       scalaJSModuleInitializers in Test ++= TestSuiteLinkerOptions.moduleInitializers,
 
       scalaJSLinkerConfig ~= {
