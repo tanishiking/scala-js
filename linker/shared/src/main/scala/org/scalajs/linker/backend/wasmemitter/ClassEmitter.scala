@@ -750,8 +750,7 @@ class ClassEmitter(coreSpec: CoreSpec) {
       postSuperStatsFunctionID,
       className,
       jsClassCaptures,
-      ctor,
-      coreSpec
+      ctor
     )
 
     // Build the actual `createJSClass` function
@@ -814,8 +813,7 @@ class ClassEmitter(coreSpec: CoreSpec) {
               paramDefs = Nil,
               restParam = None,
               tree,
-              AnyType,
-              coreSpec
+              AnyType
             )
             fb += wa.LocalGet(dataStructLocal)
             fb += wa.Call(closureFuncID)
@@ -899,8 +897,7 @@ class ClassEmitter(coreSpec: CoreSpec) {
               params,
               restParam,
               body,
-              AnyType,
-              coreSpec
+              AnyType
             )
             fb += ctx.refFuncWithDeclaration(closureFuncID)
 
@@ -928,8 +925,7 @@ class ClassEmitter(coreSpec: CoreSpec) {
                   paramDefs = Nil,
                   restParam = None,
                   getterBody,
-                  resultType = AnyType,
-                  coreSpec
+                  resultType = AnyType
                 )
                 fb += ctx.refFuncWithDeclaration(closureFuncID)
             }
@@ -949,8 +945,7 @@ class ClassEmitter(coreSpec: CoreSpec) {
                   setterParamDef :: Nil,
                   restParam = None,
                   setterBody,
-                  resultType = NoType,
-                  coreSpec
+                  resultType = NoType
                 )
                 fb += ctx.refFuncWithDeclaration(closureFuncID)
             }
@@ -1115,8 +1110,7 @@ class ClassEmitter(coreSpec: CoreSpec) {
       method.args,
       method.restParam,
       method.body,
-      resultType = AnyType,
-      coreSpec
+      resultType = AnyType
     )
   }
 
@@ -1162,8 +1156,7 @@ class ClassEmitter(coreSpec: CoreSpec) {
       method.args,
       restParam = None,
       body,
-      method.resultType,
-      coreSpec
+      method.resultType
     )
 
     if (namespace == MemberNamespace.Public && !isHijackedClass) {
