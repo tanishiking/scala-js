@@ -23,47 +23,31 @@ import org.scalajs.testsuite.utils.Platform
 class LinkTimeIfTest {
   @Test def linkTimeIfConst(): Unit = {
     // boolean const
-    linkTimeIf(true) { /* ok */ } { fail() }
-    linkTimeIf(false) { fail() } { /* ok */ }
+    assertEquals(1, linkTimeIf(true) { 1 } { 2 })
+    assertEquals(2, linkTimeIf(false) { 1 } { 2 })
   }
 
   @Test def linkTimeIfProp(): Unit = {
     locally {
       val cond = Platform.isInProductionMode
-      linkTimeIf(productionMode) {
-        assertTrue(cond)
-      } {
-        assertFalse(cond)
-      }
+      assertEquals(cond, linkTimeIf(productionMode) { true } { false })
     }
 
     locally {
       val cond = !Platform.isInProductionMode
-      linkTimeIf(!productionMode) {
-        assertTrue(cond)
-      } {
-        assertFalse(cond)
-      }
+      assertEquals(cond, linkTimeIf(!productionMode) { true } { false })
     }
   }
 
   @Test def linkTimIfIntProp(): Unit = {
     locally {
       val cond = Platform.assumedESVersion >= ESVersion.ES2015
-      linkTimeIf(esVersion >= ESVersion.ES2015) {
-        assertTrue(cond)
-      } {
-        assertFalse(cond)
-      }
+      assertEquals(cond, linkTimeIf(esVersion >= ESVersion.ES2015) { true } { false })
     }
 
     locally {
       val cond = !(Platform.assumedESVersion < ESVersion.ES2015)
-      linkTimeIf(!(esVersion < ESVersion.ES2015)) {
-        assertTrue(cond)
-      } {
-        assertFalse(cond)
-      }
+      assertEquals(cond, linkTimeIf(!(esVersion < ESVersion.ES2015)) { true } { false })
     }
   }
 
@@ -72,11 +56,8 @@ class LinkTimeIfTest {
       val cond =
         Platform.isInProductionMode &&
         Platform.assumedESVersion >= ESVersion.ES2015
-      linkTimeIf(productionMode && esVersion >= ESVersion.ES2015) {
-        assertTrue(cond)
-      } {
-        assertFalse(cond)
-      }
+      assertEquals(cond,
+          linkTimeIf(productionMode && esVersion >= ESVersion.ES2015) { true } { false })
     }
 
     locally {
@@ -84,13 +65,12 @@ class LinkTimeIfTest {
         Platform.assumedESVersion >= ESVersion.ES2015 &&
         Platform.assumedESVersion < ESVersion.ES2019 &&
         Platform.isInProductionMode
-
-      linkTimeIf(esVersion >= ESVersion.ES2015 &&
-          esVersion < ESVersion.ES2019 && productionMode) {
-        assertTrue(cond)
-      } {
-        assertFalse(cond)
-      }
+      assertEquals(cond,
+          linkTimeIf(
+            esVersion >= ESVersion.ES2015 &&
+            esVersion < ESVersion.ES2019 &&
+            productionMode
+          ) { true } { false })
     }
   }
 }
