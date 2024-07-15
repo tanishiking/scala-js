@@ -12,6 +12,7 @@
 
 package org.scalajs.testsuite.library
 
+import scala.scalajs.js
 import scala.scalajs.LinkingInfo._
 
 import org.junit.Test
@@ -72,5 +73,16 @@ class LinkTimeIfTest {
             productionMode
           ) { true } { false })
     }
+  }
+
+  @Test def exponentOp(): Unit = {
+    def pow(x: Double, y: Double): Double =
+      linkTimeIf(esVersion >= ESVersion.ES2016) {
+        (x.asInstanceOf[js.Dynamic] ** y.asInstanceOf[js.Dynamic])
+          .asInstanceOf[Double]
+      } {
+        Math.pow(x, y)
+      }
+    assertEquals(pow(2.0, 8.0), 256.0, 0)
   }
 }
