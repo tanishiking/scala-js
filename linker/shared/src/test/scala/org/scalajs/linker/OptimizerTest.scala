@@ -565,6 +565,41 @@ class OptimizerTest {
   @Test
   def removeUnreachableLinkTimeIfBranch(): AsyncResult = await {
     val methodName = m("method", Nil, I)
+    val methodBody = LinkTimeIf(
+        LinkTimeTree.BinaryOp(
+          LinkTimeOp.Boolean_==,
+          LinkTimeTree.Property("core/productionMode", BooleanType),
+          LinkTimeTree.BooleanConst(true)),
+        int(1), int(0))(IntType)
+    val classDefs = Seq(
+      classDef("Foo", kind = ClassKind.Class, superClass = Some(ObjectClass),
+          methods = List(
+            trivialCtor("Foo"),
+            MethodDef(EMF, methodName, NON, Nil, IntType, Some(methodBody))(EOH, UNV)
+          )),
+      mainTestClassDef({
+        consoleLog(Apply(EAF, New("Foo", NoArgConstructorName, Nil), methodName, Nil)(IntType))
+      })
+    )
+    for {
+      moduleSet <- linkToModuleSet(
+        classDefs, MainTestModuleInitializers,
+        config = StandardConfig().withSemantics((_.withProductionMode(true)))
+      )
+    } yield {
+      findClass(moduleSet, ClassName("Foo")).get
+        .methods.find(_.name.name == methodName).get
+        .body.get match {
+          case IntLiteral(1) => // ok
+          case t =>
+            fail(s"Unexpected body: $t")
+        }
+    }
+  }
+
+  @Test
+  def removeUnreachableCalleeByLinkTimeIf(): AsyncResult = await {
+    val methodName = m("method", Nil, I)
     val classDefs = Seq(
       classDef("Foo", kind = ClassKind.Class, superClass = Some(ObjectClass),
         methods = List(
@@ -586,22 +621,12 @@ class OptimizerTest {
     )
 
     for {
-      // TODO: it fails at IR cheker
-      // (1:1:New): Cannot find class Foo
       moduleSet <- linkToModuleSet(
         classDefs, MainTestModuleInitializers,
         config = StandardConfig().withSemantics((_.withProductionMode(true)))
       )
     } yield {
-      findClass(moduleSet, MainTestClassName.nameString).get
-        .methods.find(_.name.name == MainMethodName).get
-        .body.get match {
-          case t if t == consoleLog(str("prod")) =>
-            // ok
-
-          case t =>
-            fail(s"Unexpected body: $t")
-        }
+      assertFalse(findClass(moduleSet, ClassName("Foo")).isDefined)
     }
   }
 
