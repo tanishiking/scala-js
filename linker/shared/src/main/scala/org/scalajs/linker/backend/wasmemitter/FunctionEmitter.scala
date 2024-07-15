@@ -2592,7 +2592,7 @@ private class FunctionEmitter private (
       params,
       restParam,
       body,
-      resultType = AnyType,
+      resultType = AnyType
     )(ctx, tree.pos)
 
     markPosition(tree)
