@@ -17,7 +17,7 @@ import org.scalajs.ir.Trees.LinkTimeTree
 import org.scalajs.ir.Trees.LinkTimeOp
 import org.scalajs.linker.interface.{Semantics, ESFeatures}
 
-final class LinkTimeProperties (
+final class LinkTimeProperties private[standard] (
   semantics: Semantics,
   esFeatures: ESFeatures
 ) {
@@ -90,4 +90,10 @@ object LinkTimeProperties {
     case class IntValue(v: Int) extends ResolvedLinkTimeTree
     case class BooleanValue(v: Boolean) extends ResolvedLinkTimeTree
   }
+
+  private[linker] val Defaults: LinkTimeProperties =
+    new LinkTimeProperties(
+        Semantics.Defaults,
+        ESFeatures.Defaults
+    )
 }

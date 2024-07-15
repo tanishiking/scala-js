@@ -458,8 +458,7 @@ class ClassDefCheckerTest {
 private object ClassDefCheckerTest {
   private def assertError(clazz: ClassDef, expectMsg: String,
       allowReflectiveProxies: Boolean = false, allowTransients: Boolean = false,
-      linkTimeProperties: LinkTimeProperties =
-        new LinkTimeProperties(Semantics.Defaults, ESFeatures.Defaults)
+      linkTimeProperties: LinkTimeProperties = LinkTimeProperties.Defaults
   ) = {
     var seen = false
     val reporter = new ErrorReporter {
