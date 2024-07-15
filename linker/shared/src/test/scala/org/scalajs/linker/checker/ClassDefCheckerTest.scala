@@ -416,7 +416,7 @@ class ClassDefCheckerTest {
 
     assertError(
       linkTimeIf(LinkTimeTree.Property("core/esVersion", IntType)),
-      "Link time condition must be typed as boolean, but int is found."
+      "Link-time condition must be typed as boolean, but int is found."
     )
 
     assertError(

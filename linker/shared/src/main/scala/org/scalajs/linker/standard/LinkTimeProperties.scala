@@ -40,10 +40,10 @@ final class LinkTimeProperties (
     }
   }
 
-  def contains(prop: LinkTimeTree.Property): Boolean =
-    linkTimeProperties.get(prop.name).exists {
-      case IntValue(_)     => prop.tpe == jstpe.IntType
-      case BooleanValue(_) => prop.tpe == jstpe.BooleanType
+  def exist(name: String, tpe: jstpe.Type): Boolean =
+    linkTimeProperties.get(name).exists {
+      case IntValue(_)     => tpe == jstpe.IntType
+      case BooleanValue(_) => tpe == jstpe.BooleanType
     }
 
   private def eval(cond: LinkTimeTree): ResolvedLinkTimeTree = cond match {

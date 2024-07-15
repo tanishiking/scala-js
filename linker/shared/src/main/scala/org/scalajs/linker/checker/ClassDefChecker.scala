@@ -860,7 +860,9 @@ private final class ClassDefChecker(classDef: ClassDef,
         })
 
       case LinkTimeIf(cond, thenp, elsep) =>
-        checkLinkTimeCond(cond)
+        if (cond.tpe != BooleanType)
+          reportError(i"Link-time condition must be typed as boolean, but ${cond.tpe} is found.")
+        checkLinkTimeTree(cond)
         checkTree(thenp, env)
         checkTree(elsep, env)
     }
@@ -921,17 +923,10 @@ private final class ClassDefChecker(classDef: ClassDef,
       reportError(i"Duplicate label named ${label.name}.")
   }
 
-  private def checkLinkTimeCond(tree: LinkTimeTree)(
-      implicit ctx: ErrorContext): Unit = {
-    if (tree.tpe != BooleanType)
-      reportError(i"Link time condition must be typed as boolean, but ${tree.tpe} is found.")
-    checkLinkTimeTree(tree)
-  }
-
-  private def checkLinkTimeTree(cond: LinkTimeTree)(
-      implicit ctx: ErrorContext): Unit = {
+  private def checkLinkTimeTree(tree: LinkTimeTree): Unit = {
+    implicit val ctx = ErrorContext(tree)
     import LinkTimeOp._
-    cond match {
+    tree match {
       case LinkTimeTree.BinaryOp(op, lhs, rhs) =>
         if (lhs.tpe != rhs.tpe)
           reportError(i"Type mismatch for binary operation: ${lhs.tpe} and ${rhs.tpe}.")
@@ -946,8 +941,9 @@ private final class ClassDefChecker(classDef: ClassDef,
         checkLinkTimeTree(lhs)
         checkLinkTimeTree(rhs)
       case prop: LinkTimeTree.Property =>
-        if (!linkTimeProperties.contains(prop))
+        if (!linkTimeProperties.exist(prop.name, prop.tpe)) {
           reportError(i"link-time property '${prop.name}' of ${prop.tpe} not found.")
+        }
       case _ =>
     }
   }
