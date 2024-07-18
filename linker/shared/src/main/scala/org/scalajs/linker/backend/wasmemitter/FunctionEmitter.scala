@@ -31,7 +31,7 @@ import org.scalajs.linker.backend.webassembly.Types.{FunctionType => Sig}
 import EmbeddedConstants._
 import SWasmGen._
 import VarGen._
-import TypeTransformer._
+import _root_.org.scalajs.linker.backend.webassembly.Instructions.RefAsNonNull
 
 object FunctionEmitter {
 
@@ -60,7 +60,8 @@ object FunctionEmitter {
       paramDefs: List[ParamDef],
       restParam: Option[ParamDef],
       body: Tree,
-      resultType: Type
+      resultType: Type,
+      typeTransformer: TypeTransformer
   )(implicit ctx: WasmContext, pos: Position): Unit = {
     val emitter = prepareEmitter(
       functionID,
@@ -71,7 +72,8 @@ object FunctionEmitter {
       hasNewTarget = false,
       receiverType,
       paramDefs ::: restParam.toList,
-      transformResultType(resultType)
+      typeTransformer.transformResultType(resultType),
+      typeTransformer
     )
     emitter.genBody(body, resultType)
     emitter.fb.buildAndAddToModule()
@@ -87,6 +89,8 @@ object FunctionEmitter {
   )(implicit ctx: WasmContext): Unit = {
     implicit val pos = ctor.pos
 
+    val typeTransformer = TypeTransformer.js
+
     val allCtorParams = ctor.args ::: ctor.restParam.toList
     val ctorBody = ctor.body
 
@@ -97,7 +101,7 @@ object FunctionEmitter {
 
     // Build the `preSuperStats` function
     locally {
-      val preSuperEnvStructTypeID = ctx.getClosureDataStructType(preSuperDecls.map(_.vtpe))
+      val preSuperEnvStructTypeID = ctx.getClosureDataStructType(preSuperDecls.map(_.vtpe), typeTransformer)
       val preSuperEnvType = watpe.RefType(preSuperEnvStructTypeID)
 
       val emitter = prepareEmitter(
@@ -109,7 +113,8 @@ object FunctionEmitter {
         hasNewTarget = true,
         receiverType = None,
         allCtorParams,
-        List(preSuperEnvType)
+        List(preSuperEnvType),
+        typeTransformer
       )
 
       emitter.genBlockStats(ctorBody.beforeSuper) {
@@ -137,7 +142,8 @@ object FunctionEmitter {
         hasNewTarget = true,
         receiverType = None,
         allCtorParams,
-        List(watpe.RefType.anyref) // a js.Array
+        List(watpe.RefType.anyref), // a js.Array
+        typeTransformer
       )
       emitter.genBody(JSArrayConstr(ctorBody.superCall.args), AnyType)
       emitter.fb.buildAndAddToModule()
@@ -154,7 +160,8 @@ object FunctionEmitter {
         hasNewTarget = true,
         receiverType = Some(watpe.RefType.anyref),
         allCtorParams,
-        List(watpe.RefType.anyref)
+        List(watpe.RefType.anyref),
+        typeTransformer
       )
       emitter.genBody(Block(ctorBody.afterSuper), AnyType)
       emitter.fb.buildAndAddToModule()
@@ -170,7 +177,8 @@ object FunctionEmitter {
       hasNewTarget: Boolean,
       receiverType: Option[watpe.Type],
       paramDefs: List[ParamDef],
-      resultTypes: List[watpe.Type]
+      resultTypes: List[watpe.Type],
+      typeTransformer: TypeTransformer
   )(implicit ctx: WasmContext, pos: Position): FunctionEmitter = {
     val fb = new FunctionBuilder(ctx.moduleBuilder, functionID, originalName, pos)
 
@@ -178,7 +186,7 @@ object FunctionEmitter {
         captureParamName: String,
         captureLikes: List[(LocalName, Type)]
     ): Env = {
-      val dataStructTypeID = ctx.getClosureDataStructType(captureLikes.map(_._2))
+      val dataStructTypeID = ctx.getClosureDataStructType(captureLikes.map(_._2), typeTransformer)
       val param = fb.addParam(captureParamName, watpe.RefType(dataStructTypeID))
       val env: List[(LocalName, VarStorage)] = for {
         ((name, _), idx) <- captureLikes.zipWithIndex
@@ -224,7 +232,7 @@ object FunctionEmitter {
     val normalParamsEnv: Env = paramDefs.map { paramDef =>
       val param = fb.addParam(
         paramDef.originalName.orElse(paramDef.name.name),
-        transformLocalType(paramDef.ptpe)
+        typeTransformer.transformLocalType(paramDef.ptpe)
       )
       paramDef.name.name -> VarStorage.Local(param)
     }.toMap
@@ -238,7 +246,8 @@ object FunctionEmitter {
       enclosingClassName,
       newTargetStorage,
       receiverStorage,
-      fullEnv
+      fullEnv,
+      typeTransformer
     )
   }
 
@@ -277,9 +286,19 @@ private class FunctionEmitter private (
     enclosingClassName: Option[ClassName],
     _newTargetStorage: Option[FunctionEmitter.VarStorage.Local],
     _receiverStorage: Option[FunctionEmitter.VarStorage.Local],
-    paramsEnv: FunctionEmitter.Env
+    paramsEnv: FunctionEmitter.Env,
+    typeTransformer: TypeTransformer
 )(implicit ctx: WasmContext) {
   import FunctionEmitter._
+  import typeTransformer._
+
+  private val isJSClass = typeTransformer match {
+    case _: JSTypeTransformer => true
+    case _ => false
+  }
+  private val stringType =
+    if(isJSClass) watpe.RefType.anyref
+    else watpe.RefType.nullable(genTypeID.i16Array)
 
   private var closureIdx: Int = 0
   private var currentEnv: Env = paramsEnv
@@ -333,7 +352,24 @@ private class FunctionEmitter private (
   def genTreeAuto(tree: Tree): Unit =
     genTree(tree, tree.tpe)
 
+  def genJSTree(tree: Tree, expectedType: Type): Unit = {
+    val generatedType = genTree0(tree, expectedType)
+    val newGeneratedType = genAdapt(generatedType, expectedType)
+    TypeTransformer.js.transformType(newGeneratedType) match {
+      case refType @ watpe.RefType(true, watpe.HeapType.Type(genTypeID.i16Array)) =>
+        fb += wa.RefAsNonNull
+        fb += wa.Call(genFunctionID.createStringFromData)
+      case _: watpe.SimpleType => // do nothing, it shouldn't be a JS string
+      case _ =>
+    }
+  }
+
   def genTree(tree: Tree, expectedType: Type): Unit = {
+    val generatedType = genTree0(tree, expectedType)
+    genAdapt(generatedType, expectedType)
+  }
+
+  def genTree0(tree: Tree, expectedType: Type): Type = {
     val generatedType: Type = tree match {
       case t: Literal             => genLiteral(t, expectedType)
       case t: UnaryOp             => genUnaryOp(t)
@@ -408,17 +444,21 @@ private class FunctionEmitter private (
         throw new AssertionError(s"Invalid tree: $tree")
     }
 
-    genAdapt(generatedType, expectedType)
+    generatedType
+    // genAdapt(generatedType, expectedType)
   }
 
-  private def genAdapt(generatedType: Type, expectedType: Type): Unit = {
+  private def genAdapt(generatedType: Type, expectedType: Type): Type = {
     (generatedType, expectedType) match {
       case _ if generatedType == expectedType =>
         ()
+        generatedType
       case (NothingType, _) =>
         ()
+        generatedType
       case (_, NoType) =>
         fb += wa.Drop
+        NoType
       case (primType: PrimTypeWithRef, _) =>
         // box
         primType match {
@@ -444,8 +484,11 @@ private class FunctionEmitter private (
              */
             fb += wa.Call(genFunctionID.box(primType.primRef))
         }
+        AnyType
+
       case _ =>
         ()
+        generatedType
     }
   }
 
@@ -518,31 +561,31 @@ private class FunctionEmitter private (
         }
 
       case JSPrivateSelect(qualifier, field) =>
-        genTree(qualifier, AnyType)
+        genJSTree(qualifier, AnyType)
         fb += wa.GlobalGet(genGlobalID.forJSPrivateField(field.name))
-        genTree(rhs, AnyType)
+        genJSTree(rhs, AnyType)
         markPosition(tree)
         fb += wa.Call(genFunctionID.jsSelectSet)
 
       case JSSelect(qualifier, item) =>
-        genTree(qualifier, AnyType)
-        genTree(item, AnyType)
-        genTree(rhs, AnyType)
+        genJSTree(qualifier, AnyType)
+        genJSTree(item, AnyType)
+        genJSTree(rhs, AnyType)
         markPosition(tree)
         fb += wa.Call(genFunctionID.jsSelectSet)
 
       case JSSuperSelect(superClass, receiver, item) =>
-        genTree(superClass, AnyType)
-        genTree(receiver, AnyType)
-        genTree(item, AnyType)
-        genTree(rhs, AnyType)
+        genJSTree(superClass, AnyType)
+        genJSTree(receiver, AnyType)
+        genJSTree(item, AnyType)
+        genJSTree(rhs, AnyType)
         markPosition(tree)
         fb += wa.Call(genFunctionID.jsSuperSelectSet)
 
       case JSGlobalRef(name) =>
         markPosition(tree)
-        fb ++= ctx.stringPool.getConstantStringInstr(name)
-        genTree(rhs, AnyType)
+        fb ++= ctx.stringPool.getConstantJSStringInstr(name)
+        genJSTree(rhs, AnyType)
         markPosition(tree)
         fb += wa.Call(genFunctionID.jsGlobalRefSet)
 
@@ -631,7 +674,7 @@ private class FunctionEmitter private (
       addSyntheticLocal(watpe.RefType.any)
 
     val proxyId = ctx.getReflectiveProxyId(methodName)
-    val funcTypeID = ctx.tableFunctionType(methodName)
+    val funcTypeID = ctx.tableFunctionType(methodName, typeTransformer)
 
     /* We only need to handle calls on non-hijacked classes. For hijacked
      * classes, the compiler already emits the appropriate dispatch at the IR
@@ -829,6 +872,7 @@ private class FunctionEmitter private (
           // By spec, toString() is special
           assert(argsLocals.isEmpty)
           fb += wa.Call(genFunctionID.jsValueToString)
+          if (!isJSClass) fb += wa.Call(genFunctionID.createArrayFromJSString)
         } else if (receiverClassName == JLNumberClass) {
           // the value must be a `number`, hence we can unbox to `double`
           genUnbox(DoubleType)
@@ -836,6 +880,7 @@ private class FunctionEmitter private (
           genHijackedClassCall(BoxedDoubleClass)
         } else if (receiverClassName == CharSequenceClass) {
           // the value must be a `string`; it already has the right type
+          fb += wa.RefCast(stringType)
           pushArgs(argsLocals)
           genHijackedClassCall(BoxedStringClass)
         } else if (methodName == compareToMethodName) {
@@ -846,37 +891,51 @@ private class FunctionEmitter private (
           assert(argsLocals.size == 1)
 
           val receiverLocal = addSyntheticLocal(watpe.RefType.any)
-          fb += wa.LocalTee(receiverLocal)
+          fb += wa.LocalSet(receiverLocal)
 
-          val jsValueTypeLocal = addSyntheticLocal(watpe.Int32)
-          fb += wa.Call(genFunctionID.jsValueType)
-          fb += wa.LocalTee(jsValueTypeLocal)
-
-          fb.switch(Sig(List(watpe.Int32), Nil), Sig(Nil, List(watpe.Int32))) { () =>
-            // scrutinee is already on the stack
-          }(
-            // case JSValueTypeFalse | JSValueTypeTrue =>
-            List(JSValueTypeFalse, JSValueTypeTrue) -> { () =>
-              /* The jsValueTypeLocal is the boolean value, thanks to the chosen encoding.
-               * This trick avoids an additional unbox.
-               */
-              fb += wa.LocalGet(jsValueTypeLocal)
-              pushArgs(argsLocals)
-              genHijackedClassCall(BoxedBooleanClass)
-            },
-            // case JSValueTypeString =>
-            List(JSValueTypeString) -> { () =>
+          fb.block(watpe.Int32) { done =>
+            fb.block(watpe.RefType.any) { nonWasmString =>
               fb += wa.LocalGet(receiverLocal)
-              // no need to unbox for string
+              fb += wa.BrOnCastFail(nonWasmString, watpe.RefType.any, watpe.RefType(genTypeID.i16Array))
+
               pushArgs(argsLocals)
               genHijackedClassCall(BoxedStringClass)
+
+              fb += wa.Br(done)
+            } // not wasm string
+
+            val jsValueTypeLocal = addSyntheticLocal(watpe.Int32)
+            fb += wa.Call(genFunctionID.jsValueType)
+            fb += wa.LocalTee(jsValueTypeLocal)
+
+            fb.switch(Sig(List(watpe.Int32), Nil), Sig(Nil, List(watpe.Int32))) { () =>
+              // scrutinee is already on the stack
+            }(
+              // case JSValueTypeFalse | JSValueTypeTrue =>
+              List(JSValueTypeFalse, JSValueTypeTrue) -> { () =>
+                /* The jsValueTypeLocal is the boolean value, thanks to the chosen encoding.
+                 * This trick avoids an additional unbox.
+                 */
+                fb += wa.LocalGet(jsValueTypeLocal)
+                pushArgs(argsLocals)
+                genHijackedClassCall(BoxedBooleanClass)
+              },
+              // we shouldn't reach here? no, we reach here in js class
+              // case JSValueTypeString =>
+              List(JSValueTypeString) -> { () =>
+                fb += wa.LocalGet(receiverLocal)
+                fb += wa.Call(genFunctionID.createArrayFromJSString)
+                // no need to unbox for string
+                pushArgs(argsLocals)
+                genHijackedClassCall(BoxedStringClass)
+              }
+            ) { () =>
+              // case _ (JSValueTypeNumber) =>
+              fb += wa.LocalGet(receiverLocal)
+              genUnbox(DoubleType)
+              pushArgs(argsLocals)
+              genHijackedClassCall(BoxedDoubleClass)
             }
-          ) { () =>
-            // case _ (JSValueTypeNumber) =>
-            fb += wa.LocalGet(receiverLocal)
-            genUnbox(DoubleType)
-            pushArgs(argsLocals)
-            genHijackedClassCall(BoxedDoubleClass)
           }
         } else {
           /* It must be a method of j.l.Object and it can be any value.
@@ -928,7 +987,7 @@ private class FunctionEmitter private (
         genTypeID.forITable(receiverClassInfo.name),
         genFieldID.forMethodTableEntry(methodName)
       )
-      fb += wa.CallRef(ctx.tableFunctionType(methodName))
+      fb += wa.CallRef(ctx.tableFunctionType(methodName, typeTransformer))
     }
 
     // Generates a vtable-based dispatch.
@@ -944,7 +1003,7 @@ private class FunctionEmitter private (
         genTypeID.forVTable(receiverClassName),
         genFieldID.forMethodTableEntry(methodName)
       )
-      fb += wa.CallRef(ctx.tableFunctionType(methodName))
+      fb += wa.CallRef(ctx.tableFunctionType(methodName, typeTransformer))
     }
 
     if (receiverClassInfo.isInterface)
@@ -1176,7 +1235,7 @@ private class FunctionEmitter private (
 
       // String.length
       case String_length =>
-        fb += wa.Call(genFunctionID.stringLength)
+        fb += wa.ArrayLen
     }
 
     tree.tpe
@@ -1268,7 +1327,11 @@ private class FunctionEmitter private (
         genTree(lhs, StringType)
         genTree(rhs, IntType)
         markPosition(tree)
-        fb += wa.Call(genFunctionID.stringCharAt)
+        if (isJSClass) {
+          fb += wa.Call(genFunctionID.stringCharAt)
+        } else {
+          fb += wa.ArrayGetU(genTypeID.i16Array)
+        }
         CharType
 
       case _ =>
@@ -1288,12 +1351,20 @@ private class FunctionEmitter private (
 
     // TODO Optimize this when the operands have a better type than `any`
 
-    genTree(lhs, AnyType)
-    genTree(rhs, AnyType)
+    if (tree.lhs.tpe == StringType || tree.lhs.tpe == ClassType(BoxedStringClass)) {
+      genJSTree(lhs, AnyType)
+      genJSTree(rhs, AnyType)
+      markPosition(tree)
 
-    markPosition(tree)
+      fb += wa.Call(genFunctionID.is)
+    } else {
+      genTree(lhs, AnyType)
+      genTree(rhs, AnyType)
 
-    fb += wa.Call(genFunctionID.is)
+      markPosition(tree)
+
+      fb += wa.Call(genFunctionID.is)
+    }
 
     if (op == !==)
       fb += wa.I32Eqz
@@ -1372,7 +1443,11 @@ private class FunctionEmitter private (
         genToStringForConcat(lhs)
         genToStringForConcat(rhs)
         markPosition(tree)
-        fb += wa.Call(genFunctionID.stringConcat)
+        if (isJSClass) {
+          fb += wa.Call(genFunctionID.stringConcat)
+        } else {
+          fb += wa.Call(genFunctionID.wasmStringConcat)
+        }
     }
 
     StringType
@@ -1410,7 +1485,7 @@ private class FunctionEmitter private (
          * end $done
          */
 
-        fb.block(watpe.RefType.any) { labelDone =>
+        fb.block(stringType) { labelDone =>
           fb.block() { labelIsNull =>
             genTreeAuto(tree)
             markPosition(tree)
@@ -1420,7 +1495,10 @@ private class FunctionEmitter private (
             fb += wa.BrOnNonNull(labelDone)
           }
 
-          fb ++= ctx.stringPool.getConstantStringInstr("null")
+          if (isJSClass)
+            fb ++= ctx.stringPool.getConstantJSStringInstr("null")
+          else
+            fb ++= ctx.stringPool.getConstantStringInstr("null")
         }
       } else {
         /* Dispatch where the receiver can be a JS value.
@@ -1439,28 +1517,66 @@ private class FunctionEmitter private (
          * end $done
          */
 
-        fb.block(watpe.RefType.any) { labelDone =>
-          // First try the case where the value is one of our objects
-          fb.block(watpe.RefType.anyref) { labelNotOurObject =>
-            // Load receiver
-            genTreeAuto(tree)
+        if (isJSClass) {
+          fb.block(watpe.RefType.any) { labelDone =>
+            // First try the case where the value is one of our objects
+            fb.block(watpe.RefType.anyref) { labelNotOurObject =>
+              // Load receiver
+              genTreeAuto(tree)
 
-            markPosition(tree)
+              markPosition(tree)
 
-            fb += wa.BrOnCastFail(
-              labelNotOurObject,
-              watpe.RefType.anyref,
-              watpe.RefType(genTypeID.ObjectStruct)
-            )
-            fb += wa.LocalTee(receiverLocalForDispatch)
-            genTableDispatch(objectClassInfo, toStringMethodName, receiverLocalForDispatch)
-            fb += wa.BrOnNonNull(labelDone)
-            fb += wa.RefNull(watpe.HeapType.Any)
-          } // end block labelNotOurObject
+              fb += wa.BrOnCastFail(
+                labelNotOurObject,
+                watpe.RefType.anyref,
+                watpe.RefType(genTypeID.ObjectStruct)
+              )
+              fb += wa.LocalTee(receiverLocalForDispatch)
+              genTableDispatch(objectClassInfo, toStringMethodName, receiverLocalForDispatch)
+              fb += wa.BrOnNonNull(labelDone)
+              fb += wa.RefNull(watpe.HeapType.Any)
+            } // end block labelNotOurObject
 
-          // Now we have a value that is not one of our objects; the anyref is still on the stack
-          fb += wa.Call(genFunctionID.jsValueToStringForConcat)
-        } // end block labelDone
+            // Now we have a value that is not one of our objects; the anyref is still on the stack
+            fb += wa.Call(genFunctionID.jsValueToStringForConcat)
+          } // end block labelDone
+        } else {
+
+          // isWasm
+          fb.block(watpe.RefType.nullable(genTypeID.i16Array)) { labelDone =>
+            fb.block(watpe.RefType.anyref) { labelNotOurString =>
+              // First try the case where the value is one of our objects
+              fb.block(watpe.RefType.anyref) { labelNotOurObject =>
+                // Load receiver
+                genTreeAuto(tree)
+
+                markPosition(tree)
+
+                fb += wa.BrOnCastFail(
+                  labelNotOurObject,
+                  watpe.RefType.anyref,
+                  watpe.RefType(genTypeID.ObjectStruct)
+                )
+                fb += wa.LocalTee(receiverLocalForDispatch)
+                genTableDispatch(objectClassInfo, toStringMethodName, receiverLocalForDispatch)
+                fb += wa.BrOnNonNull(labelDone)
+                fb += wa.RefNull(watpe.HeapType.Any)
+              } // end block labelNotOurObject
+
+              // Now we have a value that is not one of our objects; the anyref is still on the stack
+              fb += wa.BrOnCastFail(
+                labelNotOurString,
+                watpe.RefType.anyref,
+                watpe.RefType.nullable(genTypeID.i16Array)
+              )
+              fb += wa.Br(labelDone)
+            }
+
+            fb += wa.Call(genFunctionID.jsValueToStringForConcat)
+            fb += wa.Call(genFunctionID.createArrayFromJSString)
+            fb += wa.RefAsNonNull
+          } // end block labelDone
+        }
       }
     }
 
@@ -1475,19 +1591,26 @@ private class FunctionEmitter private (
             () // no-op
           case BooleanType =>
             fb += wa.Call(genFunctionID.booleanToString)
+            if (!isJSClass) fb += wa.Call(genFunctionID.createArrayFromJSString)
           case CharType =>
             fb += wa.Call(genFunctionID.charToString)
+            if (!isJSClass) fb += wa.Call(genFunctionID.createArrayFromJSString)
           case ByteType | ShortType | IntType =>
             fb += wa.Call(genFunctionID.intToString)
+            if (!isJSClass) fb += wa.Call(genFunctionID.createArrayFromJSString)
           case LongType =>
             fb += wa.Call(genFunctionID.longToString)
+            if (!isJSClass) fb += wa.Call(genFunctionID.createArrayFromJSString)
           case FloatType =>
             fb += wa.F64PromoteF32
             fb += wa.Call(genFunctionID.doubleToString)
+            if (!isJSClass) fb += wa.Call(genFunctionID.createArrayFromJSString)
           case DoubleType =>
             fb += wa.Call(genFunctionID.doubleToString)
+            if (!isJSClass) fb += wa.Call(genFunctionID.createArrayFromJSString)
           case NullType | UndefType =>
             fb += wa.Call(genFunctionID.jsValueToStringForConcat)
+            if (!isJSClass) { fb += wa.Call(genFunctionID.createArrayFromJSString) }
           case NothingType =>
             () // unreachable
           case NoType =>
@@ -1499,7 +1622,8 @@ private class FunctionEmitter private (
         // Common case for which we want to avoid the hijacked class dispatch
         genTreeAuto(tree)
         markPosition(tree)
-        fb += wa.Call(genFunctionID.jsValueToStringForConcat) // for `null`
+        if (!isJSClass)
+          fb += wa.Call(genFunctionID.jsValueToStringForConcat) // for `null`
 
       case ClassType(className) =>
         genWithDispatch(ctx.getClassInfo(className).isAncestorOfHijackedClass)
@@ -1630,7 +1754,10 @@ private class FunctionEmitter private (
       case UndefType =>
         fb += wa.Call(genFunctionID.isUndef)
       case StringType =>
-        fb += wa.Call(genFunctionID.isString)
+        if (isJSClass)
+          fb += wa.Call(genFunctionID.isString)
+        else
+          fb += wa.RefTest(watpe.RefType(genTypeID.i16Array))
       case CharType =>
         val structTypeID = genTypeID.forClass(SpecialNames.CharBoxClass)
         fb += wa.RefTest(watpe.RefType(structTypeID))
@@ -1766,6 +1893,8 @@ private class FunctionEmitter private (
             targetWasmType match {
               case watpe.RefType(true, watpe.HeapType.Any) =>
                 () // nothing to do
+              case watpe.RefType(true, watpe.HeapType.Type(genTypeID.i16Array)) if !isJSClass =>
+                fb += wa.Call(genFunctionID.createArrayFromJSString)
               case targetWasmType: watpe.RefType =>
                 fb += wa.RefCast(targetWasmType)
               case _ =>
@@ -2201,7 +2330,7 @@ private class FunctionEmitter private (
   private def genJSNew(tree: JSNew): Type = {
     val JSNew(ctor, args) = tree
 
-    genTree(ctor, AnyType)
+    genJSTree(ctor, AnyType)
     genJSArgsArray(args)
     markPosition(tree)
     fb += wa.Call(genFunctionID.jsNew)
@@ -2211,8 +2340,8 @@ private class FunctionEmitter private (
   private def genJSSelect(tree: JSSelect): Type = {
     val JSSelect(qualifier, item) = tree
 
-    genTree(qualifier, AnyType)
-    genTree(item, AnyType)
+    genJSTree(qualifier, AnyType)
+    genJSTree(item, AnyType)
     markPosition(tree)
     fb += wa.Call(genFunctionID.jsSelect)
     AnyType
@@ -2221,7 +2350,7 @@ private class FunctionEmitter private (
   private def genJSFunctionApply(tree: JSFunctionApply): Type = {
     val JSFunctionApply(fun, args) = tree
 
-    genTree(fun, AnyType)
+    genJSTree(fun, AnyType)
     genJSArgsArray(args)
     markPosition(tree)
     fb += wa.Call(genFunctionID.jsFunctionApply)
@@ -2231,8 +2360,8 @@ private class FunctionEmitter private (
   private def genJSMethodApply(tree: JSMethodApply): Type = {
     val JSMethodApply(receiver, method, args) = tree
 
-    genTree(receiver, AnyType)
-    genTree(method, AnyType)
+    genJSTree(receiver, AnyType)
+    genJSTree(method, AnyType)
     genJSArgsArray(args)
     markPosition(tree)
     fb += wa.Call(genFunctionID.jsMethodApply)
@@ -2242,7 +2371,7 @@ private class FunctionEmitter private (
   private def genJSImportCall(tree: JSImportCall): Type = {
     val JSImportCall(arg) = tree
 
-    genTree(arg, AnyType)
+    genJSTree(arg, AnyType)
     markPosition(tree)
     fb += wa.Call(genFunctionID.jsImportCall)
     AnyType
@@ -2294,8 +2423,8 @@ private class FunctionEmitter private (
   private def genJSDelete(tree: JSDelete): Type = {
     val JSDelete(qualifier, item) = tree
 
-    genTree(qualifier, AnyType)
-    genTree(item, AnyType)
+    genJSTree(qualifier, AnyType)
+    genJSTree(item, AnyType)
     markPosition(tree)
     fb += wa.Call(genFunctionID.jsDelete)
     NoType
@@ -2304,7 +2433,7 @@ private class FunctionEmitter private (
   private def genJSUnaryOp(tree: JSUnaryOp): Type = {
     val JSUnaryOp(op, lhs) = tree
 
-    genTree(lhs, AnyType)
+    genJSTree(lhs, AnyType)
     markPosition(tree)
     fb += wa.Call(genFunctionID.jsUnaryOps(op))
     AnyType
@@ -2319,7 +2448,7 @@ private class FunctionEmitter private (
          * condition based on the truthy value of the left-hand-side.
          */
         val lhsLocal = addSyntheticLocal(watpe.RefType.anyref)
-        genTree(lhs, AnyType)
+        genJSTree(lhs, AnyType)
         markPosition(tree)
         fb += wa.LocalTee(lhsLocal)
         fb += wa.Call(genFunctionID.jsIsTruthy)
@@ -2327,12 +2456,12 @@ private class FunctionEmitter private (
           fb.ifThenElse(watpe.RefType.anyref) {
             fb += wa.LocalGet(lhsLocal)
           } {
-            genTree(rhs, AnyType)
+            genJSTree(rhs, AnyType)
             markPosition(tree)
           }
         } else {
           fb.ifThenElse(watpe.RefType.anyref) {
-            genTree(rhs, AnyType)
+            genJSTree(rhs, AnyType)
             markPosition(tree)
           } {
             fb += wa.LocalGet(lhsLocal)
@@ -2340,8 +2469,8 @@ private class FunctionEmitter private (
         }
 
       case _ =>
-        genTree(lhs, AnyType)
-        genTree(rhs, AnyType)
+        genJSTree(lhs, AnyType)
+        genJSTree(rhs, AnyType)
         markPosition(tree)
         fb += wa.Call(genFunctionID.jsBinaryOps(op))
     }
@@ -2363,8 +2492,8 @@ private class FunctionEmitter private (
     markPosition(tree)
     fb += wa.Call(genFunctionID.jsNewObject)
     for ((prop, value) <- fields) {
-      genTree(prop, AnyType)
-      genTree(value, AnyType)
+      genJSTree(prop, AnyType)
+      genJSTree(value, AnyType)
       fb += wa.Call(genFunctionID.jsObjectPush)
     }
     AnyType
@@ -2374,7 +2503,7 @@ private class FunctionEmitter private (
     val JSGlobalRef(name) = tree
 
     markPosition(tree)
-    fb ++= ctx.stringPool.getConstantStringInstr(name)
+    fb ++= ctx.stringPool.getConstantJSStringInstr(name)
     fb += wa.Call(genFunctionID.jsGlobalRefGet)
     AnyType
   }
@@ -2383,7 +2512,7 @@ private class FunctionEmitter private (
     val JSTypeOfGlobalRef(JSGlobalRef(name)) = tree
 
     markPosition(tree)
-    fb ++= ctx.stringPool.getConstantStringInstr(name)
+    fb ++= ctx.stringPool.getConstantJSStringInstr(name)
     fb += wa.Call(genFunctionID.jsGlobalRefTypeof)
     AnyType
   }
@@ -2393,10 +2522,10 @@ private class FunctionEmitter private (
     for (arg <- args) {
       arg match {
         case arg: Tree =>
-          genTree(arg, AnyType)
+          genJSTree(arg, AnyType)
           fb += wa.Call(genFunctionID.jsArrayPush)
         case JSSpread(items) =>
-          genTree(items, AnyType)
+          genJSTree(items, AnyType)
           fb += wa.Call(genFunctionID.jsArraySpreadPush)
       }
     }
@@ -2562,7 +2691,7 @@ private class FunctionEmitter private (
 
     SWasmGen.genArrayValue(fb, arrayTypeRef, elems.size) {
       // Create the underlying array
-      elems.foreach(genTree(_, expectedElemType))
+      elems.foreach(genJSTree(_, expectedElemType))
 
       // Re-mark the position for the footer of `genArrayValue`
       markPosition(tree)
@@ -2576,7 +2705,7 @@ private class FunctionEmitter private (
 
     val hasThis = !arrow
     val hasRestParam = restParam.isDefined
-    val dataStructTypeID = ctx.getClosureDataStructType(captureParams.map(_.ptpe))
+    val dataStructTypeID = ctx.getClosureDataStructType(captureParams.map(_.ptpe), typeTransformer)
 
     // Define the function where captures are reified as a `__captureData` argument.
     val closureFuncOrigName = genClosureFuncOriginalName()
@@ -2590,7 +2719,8 @@ private class FunctionEmitter private (
       params,
       restParam,
       body,
-      resultType = AnyType
+      resultType = AnyType,
+      typeTransformer
     )(ctx, tree.pos)
 
     markPosition(tree)
@@ -2682,7 +2812,9 @@ private class FunctionEmitter private (
               fb += wa.I32Eq
               fb += wa.BrIf(label)
             case StringLiteral(value) =>
-              fb ++= ctx.stringPool.getConstantStringInstr(value)
+              fb += RefAsNonNull
+              fb += wa.Call(genFunctionID.createJSStringFromArray) // TODO compare string in wasm
+              fb ++= ctx.stringPool.getConstantJSStringInstr(value)
               fb += wa.Call(genFunctionID.is)
               fb += wa.BrIf(label)
             case Null() =>
@@ -2720,7 +2852,7 @@ private class FunctionEmitter private (
     }
 
     for ((captureValue, captureParam) <- captureValues.zip(jsClassCaptures))
-      genTree(captureValue, captureParam.ptpe)
+      genJSTree(captureValue, captureParam.ptpe)
 
     markPosition(tree)
 
@@ -2732,7 +2864,7 @@ private class FunctionEmitter private (
   private def genJSPrivateSelect(tree: JSPrivateSelect): Type = {
     val JSPrivateSelect(qualifier, FieldIdent(fieldName)) = tree
 
-    genTree(qualifier, AnyType)
+    genJSTree(qualifier, AnyType)
 
     markPosition(tree)
 
@@ -2745,9 +2877,9 @@ private class FunctionEmitter private (
   private def genJSSuperSelect(tree: JSSuperSelect): Type = {
     val JSSuperSelect(superClass, receiver, item) = tree
 
-    genTree(superClass, AnyType)
-    genTree(receiver, AnyType)
-    genTree(item, AnyType)
+    genJSTree(superClass, AnyType)
+    genJSTree(receiver, AnyType)
+    genJSTree(item, AnyType)
 
     markPosition(tree)
 
@@ -2759,9 +2891,9 @@ private class FunctionEmitter private (
   private def genJSSuperMethodCall(tree: JSSuperMethodCall): Type = {
     val JSSuperMethodCall(superClass, receiver, method, args) = tree
 
-    genTree(superClass, AnyType)
-    genTree(receiver, AnyType)
-    genTree(method, AnyType)
+    genJSTree(superClass, AnyType)
+    genJSTree(receiver, AnyType)
+    genJSTree(method, AnyType)
     genJSArgsArray(args)
 
     markPosition(tree)

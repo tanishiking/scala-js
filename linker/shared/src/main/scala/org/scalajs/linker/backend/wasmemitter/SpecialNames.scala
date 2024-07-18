@@ -24,12 +24,16 @@ object SpecialNames {
    */
   val CharBoxClass = BoxedCharacterClass.withSuffix("Box")
   val LongBoxClass = BoxedLongClass.withSuffix("Box")
+  val StringBoxClass = BoxedStringClass.withSuffix("Box")
 
   val CharBoxCtor = MethodName.constructor(List(CharRef))
   val LongBoxCtor = MethodName.constructor(List(LongRef))
+  val StringBoxCtor = MethodName.constructor(List(ArrayTypeRef.of(ShortRef)))
 
   // js.JavaScriptException, for WrapAsThrowable and UnwrapFromThrowable
   val JSExceptionClass = ClassName("scala.scalajs.js.JavaScriptException")
+
+  val JSAnyClass = ClassName("scala.scalajs.js.Any")
 
   // Field names
 

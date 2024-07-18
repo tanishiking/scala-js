@@ -80,6 +80,8 @@ const linkingInfo = Object.freeze({
 });
 
 const scalaJSHelpers = {
+  print: (x) => console.log(JSON.stringify(x)),
+
   // JSTag
   JSTag: WebAssembly.JSTag,
 
@@ -184,6 +186,7 @@ const scalaJSHelpers = {
   jsNewObject: () => ({}),
   jsObjectPush: (o, p, v) => (o[p] = v, o),
   jsSelect: (o, p) => o[p],
+  // jsSelectSet: (o, p, v) => { console.log(JSON.stringify(o)); console.log(JSON.stringify(p)); console.log(JSON.stringify(v)); o[p] = v },
   jsSelectSet: (o, p, v) => o[p] = v,
   jsNew: (constr, args) => new constr(...args),
   jsFunctionApply: (f, args) => f(...args),

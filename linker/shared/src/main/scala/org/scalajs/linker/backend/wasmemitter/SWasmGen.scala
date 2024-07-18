@@ -32,7 +32,8 @@ object SWasmGen {
       case LongType   => I64Const(0L)
       case FloatType  => F32Const(0.0f)
       case DoubleType => F64Const(0.0)
-      case StringType => GlobalGet(genGlobalID.emptyString)
+      case StringType => ArrayNewFixed(genTypeID.i16Array, 0)
+      case ClassType(BoxedStringClass) => ArrayNewFixed(genTypeID.i16Array, 0)
       case UndefType  => GlobalGet(genGlobalID.undef)
 
       case AnyType | ClassType(_) | ArrayType(_) | NullType =>
@@ -116,14 +117,14 @@ object SWasmGen {
       implicit ctx: WasmContext): Unit = {
     def genFollowPath(path: List[String]): Unit = {
       for (prop <- path) {
-        fb ++= ctx.stringPool.getConstantStringInstr(prop)
+        fb ++= ctx.stringPool.getConstantJSStringInstr(prop)
         fb += Call(genFunctionID.jsSelect)
       }
     }
 
     loadSpec match {
       case JSNativeLoadSpec.Global(globalRef, path) =>
-        fb ++= ctx.stringPool.getConstantStringInstr(globalRef)
+        fb ++= ctx.stringPool.getConstantJSStringInstr(globalRef)
         fb += Call(genFunctionID.jsGlobalRefGet)
         genFollowPath(path)
       case JSNativeLoadSpec.Import(module, path) =>

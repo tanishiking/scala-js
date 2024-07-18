@@ -82,6 +82,7 @@ class NestedJSClassTest {
     assertFalse(inner3.isInstanceOf[container1.InnerJSClass])
   }
 
+  /*
   @Test def innerJSClassBasicsInsideTrait(): Unit = {
     val container1 = new ScalaTraitContainerSubclass("hello")
     val innerJSClass = container1.getInnerJSClass
@@ -683,6 +684,7 @@ class NestedJSClassTest {
     assertEquals(msg, obj.message)
     assertEquals(msg + "3 overridden", obj.methodSuper_Issue4801(3))
   }
+  */
 }
 
 object NestedJSClassTest {

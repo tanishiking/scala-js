@@ -19,7 +19,7 @@ import org.scalajs.linker.backend.webassembly.{Types => watpe}
 
 import VarGen._
 
-object TypeTransformer {
+trait TypeTransformer {
 
   /** Transforms an IR type for a local definition (including parameters).
    *
@@ -67,8 +67,11 @@ object TypeTransformer {
   def transformType(tpe: Type)(implicit ctx: WasmContext): watpe.Type = {
     tpe match {
       case AnyType                => watpe.RefType.anyref
+      case ClassType(className) if className == BoxedStringClass =>
+        watpe.RefType.nullable(VarGen.genTypeID.i16Array)
       case ClassType(className)   => transformClassType(className)
-      case StringType | UndefType => watpe.RefType.any
+      case StringType => watpe.RefType.nullable(VarGen.genTypeID.i16Array)
+      case UndefType => watpe.RefType.any
       case tpe: PrimTypeWithRef   => transformPrimType(tpe)
 
       case tpe: ArrayType =>
@@ -96,7 +99,7 @@ object TypeTransformer {
     }
   }
 
-  private def transformPrimType(tpe: PrimTypeWithRef): watpe.Type = {
+  protected def transformPrimType(tpe: PrimTypeWithRef): watpe.Type = {
     tpe match {
       case BooleanType => watpe.Int32
       case ByteType    => watpe.Int32
@@ -113,4 +116,30 @@ object TypeTransformer {
             s"${tpe.show()} does not have a corresponding Wasm type")
     }
   }
+}
+
+class TypeTransformerBase extends TypeTransformer
+
+class JSTypeTransformer extends TypeTransformer {
+  override def transformType(tpe: Type)(implicit ctx: WasmContext): watpe.Type = {
+    tpe match {
+      case AnyType                => watpe.RefType.anyref
+      case ClassType(className) if className == BoxedStringClass => watpe.RefType.anyref
+      case StringType => watpe.RefType.anyref
+      case ClassType(className)   => transformClassType(className)
+      case UndefType => watpe.RefType.any
+      case tpe: PrimTypeWithRef   => transformPrimType(tpe)
+
+      case tpe: ArrayType =>
+        watpe.RefType.nullable(genTypeID.forArrayClass(tpe.arrayTypeRef))
+
+      case RecordType(fields) =>
+        throw new AssertionError(s"Unexpected record type $tpe")
+    }
+  }
+}
+
+object TypeTransformer {
+  val default = new TypeTransformerBase()
+  val js = new JSTypeTransformer()
 }

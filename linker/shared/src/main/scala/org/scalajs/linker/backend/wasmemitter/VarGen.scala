@@ -147,9 +147,11 @@ object VarGen {
     case object start extends FunctionID
 
     // js string builtins
-
     case object fromCharCodeArray extends FunctionID
     case object intoCharCodeArray extends FunctionID
+
+    case object createJSStringFromArray extends FunctionID
+    case object createArrayFromJSString extends FunctionID
 
     // JS helpers
 
@@ -158,6 +160,8 @@ object VarGen {
      *  Its `toString()` is guaranteed to correspond to the import name of the helper.
      */
     sealed abstract class JSHelperFunctionID extends FunctionID
+
+    case object print extends JSHelperFunctionID
 
     case object is extends JSHelperFunctionID
 
@@ -285,6 +289,7 @@ object VarGen {
 
     case object createStringFromData extends FunctionID
     case object stringLiteral extends FunctionID
+    case object wasmStringConcat extends JSHelperFunctionID
     case object typeDataName extends FunctionID
     case object createClassOf extends FunctionID
     case object getClassOf extends FunctionID

@@ -102,7 +102,7 @@ final class WasmContext(
    *  Table function types are part of the main `rectype`, and have names derived from the
    *  `methodName`.
    */
-  def tableFunctionType(methodName: MethodName): wanme.TypeID = {
+  def tableFunctionType(methodName: MethodName, typeTransformer: TypeTransformer): wanme.TypeID = {
     // Project all the names with the same *signatures* onto a normalized `MethodName`
     val normalizedName = MethodName(
       SpecialNames.normalizedSimpleMethodName,
@@ -115,9 +115,9 @@ final class WasmContext(
       normalizedName, {
         val typeID = genTypeID.forTableFunctionType(normalizedName)
         val regularParamTyps = normalizedName.paramTypeRefs.map { typeRef =>
-          TypeTransformer.transformLocalType(inferTypeFromTypeRef(typeRef))(this)
+          typeTransformer.transformLocalType(inferTypeFromTypeRef(typeRef))(this)
         }
-        val resultType = TypeTransformer.transformResultType(
+        val resultType = typeTransformer.transformResultType(
             inferTypeFromTypeRef(normalizedName.resultTypeRef))(this)
         mainRecType.addSubType(
           typeID,
@@ -129,7 +129,7 @@ final class WasmContext(
     )
   }
 
-  def getClosureDataStructType(captureParamTypes: List[Type]): wanme.TypeID = {
+  def getClosureDataStructType(captureParamTypes: List[Type], typeTransformer: TypeTransformer): wanme.TypeID = {
     closureDataTypes.getOrElseUpdate(
       captureParamTypes, {
         val fields: List[watpe.StructField] = {
@@ -137,7 +137,7 @@ final class WasmContext(
             watpe.StructField(
               genFieldID.captureParam(i),
               NoOriginalName,
-              TypeTransformer.transformLocalType(tpe)(this),
+              typeTransformer.transformLocalType(tpe)(this),
               isMutable = false
             )
           }

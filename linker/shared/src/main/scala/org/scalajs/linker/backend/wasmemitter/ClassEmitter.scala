@@ -32,7 +32,6 @@ import org.scalajs.linker.backend.webassembly.{Types => watpe}
 import EmbeddedConstants._
 import SWasmGen._
 import VarGen._
-import TypeTransformer._
 import WasmContext._
 
 class ClassEmitter(coreSpec: CoreSpec) {
@@ -47,6 +46,17 @@ class ClassEmitter(coreSpec: CoreSpec) {
       genTypeDataGlobal(clazz.className, genTypeID.typeData, typeDataFieldValues, Nil)
     }
 
+    val typeTransformer = clazz.kind match {
+      case ClassKind.Class | ClassKind.ModuleClass | ClassKind.Interface | ClassKind.HijackedClass =>
+        println(s"${clazz.name.name} => default")
+        TypeTransformer.default
+      case ClassKind.JSClass | ClassKind.JSModuleClass | ClassKind.AbstractJSType | ClassKind.NativeJSClass |
+          ClassKind.NativeJSModuleClass =>
+        println(s"${clazz.name.name} => js")
+        TypeTransformer.js
+    }
+
+
     // Declare static fields
     for {
       field @ FieldDef(flags, name, _, ftpe) <- clazz.fields
@@ -57,7 +67,7 @@ class ClassEmitter(coreSpec: CoreSpec) {
         genGlobalID.forStaticField(name.name),
         origName,
         isMutable = true,
-        transformType(ftpe),
+        typeTransformer.transformType(ftpe),
         wa.Expr(List(genZeroOf(ftpe)))
       )
       ctx.addGlobal(global)
@@ -66,7 +76,7 @@ class ClassEmitter(coreSpec: CoreSpec) {
     // Generate method implementations
     for (method <- clazz.methods) {
       if (method.body.isDefined)
-        genMethod(clazz, method)
+        genMethod(clazz, method, typeTransformer)
     }
 
     clazz.kind match {
@@ -350,7 +360,7 @@ class ClassEmitter(coreSpec: CoreSpec) {
       watpe.StructField(
         genFieldID.forClassInstanceField(field.name.name),
         makeDebugName(ns.InstanceField, field.name.name),
-        transformType(field.ftpe),
+        TypeTransformer.default.transformType(field.ftpe),
         isMutable = true // initialized by the constructors, so always mutable at the Wasm level
       )
     }
@@ -400,7 +410,7 @@ class ClassEmitter(coreSpec: CoreSpec) {
         watpe.StructField(
           genFieldID.forMethodTableEntry(methodName),
           makeDebugName(ns.TableEntry, className, methodName),
-          watpe.RefType(ctx.tableFunctionType(methodName)),
+          watpe.RefType(ctx.tableFunctionType(methodName, TypeTransformer.default)),
           isMutable = false
         )
       }
@@ -667,7 +677,7 @@ class ClassEmitter(coreSpec: CoreSpec) {
         watpe.StructField(
           genFieldID.forMethodTableEntry(methodName),
           makeDebugName(ns.TableEntry, className, methodName),
-          watpe.RefType(ctx.tableFunctionType(methodName)),
+          watpe.RefType(ctx.tableFunctionType(methodName, TypeTransformer.default)),
           isMutable = false
         )
       }
@@ -717,6 +727,8 @@ class ClassEmitter(coreSpec: CoreSpec) {
   private def genCreateJSClassFunction(clazz: LinkedClass)(implicit ctx: WasmContext): Unit = {
     implicit val noPos: Position = Position.NoPosition
 
+    val typeTransformer = TypeTransformer.js
+
     val className = clazz.className
     val jsClassCaptures = clazz.jsClassCaptures.getOrElse(Nil)
 
@@ -762,11 +774,11 @@ class ClassEmitter(coreSpec: CoreSpec) {
         clazz.pos
       )
       val classCaptureParams = jsClassCaptures.map { cc =>
-        fb.addParam("cc." + cc.name.name.nameString, transformLocalType(cc.ptpe))
+        fb.addParam("cc." + cc.name.name.nameString, typeTransformer.transformLocalType(cc.ptpe))
       }
       fb.setResultType(watpe.RefType.any)
 
-      val dataStructTypeID = ctx.getClosureDataStructType(jsClassCaptures.map(_.ptpe))
+      val dataStructTypeID = ctx.getClosureDataStructType(jsClassCaptures.map(_.ptpe), typeTransformer)
 
       val dataStructLocal = fb.addLocal("classCaptures", watpe.RefType(dataStructTypeID))
       val jsClassLocal = fb.addLocal("jsClass", watpe.RefType.any)
@@ -792,7 +804,7 @@ class ClassEmitter(coreSpec: CoreSpec) {
         tree match {
           case StringLiteral(value) =>
             // Common shape for all the `nameTree` expressions
-            fb ++= ctx.stringPool.getConstantStringInstr(value)
+            fb ++= ctx.stringPool.getConstantJSStringInstr(value)
 
           case VarRef(LocalIdent(localName)) if classCaptureParamsOfTypeAny.contains(localName) =>
             /* Common shape for the `jsSuperClass` value
@@ -813,7 +825,8 @@ class ClassEmitter(coreSpec: CoreSpec) {
               paramDefs = Nil,
               restParam = None,
               tree,
-              AnyType
+              AnyType,
+              TypeTransformer.js
             )
             fb += wa.LocalGet(dataStructLocal)
             fb += wa.Call(closureFuncID)
@@ -897,7 +910,8 @@ class ClassEmitter(coreSpec: CoreSpec) {
               params,
               restParam,
               body,
-              AnyType
+              AnyType,
+              TypeTransformer.js
             )
             fb += ctx.refFuncWithDeclaration(closureFuncID)
 
@@ -925,7 +939,8 @@ class ClassEmitter(coreSpec: CoreSpec) {
                   paramDefs = Nil,
                   restParam = None,
                   getterBody,
-                  resultType = AnyType
+                  resultType = AnyType,
+                  TypeTransformer.js
                 )
                 fb += ctx.refFuncWithDeclaration(closureFuncID)
             }
@@ -945,7 +960,8 @@ class ClassEmitter(coreSpec: CoreSpec) {
                   setterParamDef :: Nil,
                   restParam = None,
                   setterBody,
-                  resultType = NoType
+                  resultType = NoType,
+                  TypeTransformer.js
                 )
                 fb += ctx.refFuncWithDeclaration(closureFuncID)
             }
@@ -1110,11 +1126,12 @@ class ClassEmitter(coreSpec: CoreSpec) {
       method.args,
       method.restParam,
       method.body,
-      resultType = AnyType
+      resultType = AnyType,
+      TypeTransformer.js
     )
   }
 
-  private def genMethod(clazz: LinkedClass, method: MethodDef)(
+  private def genMethod(clazz: LinkedClass, method: MethodDef, typeTransformer: TypeTransformer)(
       implicit ctx: WasmContext): Unit = {
     implicit val pos = method.pos
 
@@ -1140,9 +1157,9 @@ class ClassEmitter(coreSpec: CoreSpec) {
       if (namespace.isStatic)
         None
       else if (isHijackedClass)
-        Some(transformType(BoxedClassToPrimType(className)))
+        Some(typeTransformer.transformType(BoxedClassToPrimType(className)))
       else
-        Some(transformClassType(className).toNonNullable)
+        Some(typeTransformer.transformClassType(className).toNonNullable)
 
     val body = method.body.getOrElse(throw new Exception("abstract method cannot be transformed"))
 
@@ -1156,7 +1173,8 @@ class ClassEmitter(coreSpec: CoreSpec) {
       method.args,
       restParam = None,
       body,
-      method.resultType
+      method.resultType,
+      typeTransformer
     )
 
     if (namespace == MemberNamespace.Public && !isHijackedClass) {
@@ -1176,10 +1194,10 @@ class ClassEmitter(coreSpec: CoreSpec) {
       val receiverParam = fb.addParam(thisOriginalName, watpe.RefType.any)
       val argParams = method.args.map { arg =>
         val origName = arg.originalName.orElse(arg.name.name)
-        fb.addParam(origName, TypeTransformer.transformLocalType(arg.ptpe))
+        fb.addParam(origName, typeTransformer.transformLocalType(arg.ptpe))
       }
-      fb.setResultTypes(TypeTransformer.transformResultType(method.resultType))
-      fb.setFunctionType(ctx.tableFunctionType(methodName))
+      fb.setResultTypes(typeTransformer.transformResultType(method.resultType))
+      fb.setFunctionType(ctx.tableFunctionType(methodName, typeTransformer))
 
       // Load and cast down the receiver
       fb += wa.LocalGet(receiverParam)

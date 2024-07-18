@@ -260,6 +260,7 @@ object MyScalaJSPlugin extends AutoPlugin {
         val baseConfig = NodeJSEnv.Config().withSourceMap(wantSourceMaps.value)
         val config = if (enableWasmEverywhere.value) {
           baseConfig.withArgs(List(
+            "--experimental-wasm-imported-strings",
             "--experimental-wasm-exnref",
             /* Force using the Turboshaft infrastructure for the optimizing compiler.
              * It appears to be more stable for the Wasm that we throw at it.
@@ -2030,13 +2031,7 @@ object Build {
       scalaJSUseMainModuleInitializer := true,
       scalaJSLinkerConfig ~= {
         _.withPrettyPrint(true)
-      },
-      jsEnv := {
-        new NodeJSEnv(
-          NodeJSEnv.Config().withArgs(List("--experimental-wasm-imported-strings"))
-        )
-      },
-
+      }
   ).withScalaJSCompiler.dependsOnLibrary
 
   lazy val reversi: MultiScalaProject = MultiScalaProject(
