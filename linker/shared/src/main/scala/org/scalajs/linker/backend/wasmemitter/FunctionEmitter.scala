@@ -60,7 +60,8 @@ object FunctionEmitter {
       paramDefs: List[ParamDef],
       restParam: Option[ParamDef],
       body: Tree,
-      resultType: Type
+      resultType: Type,
+      typeTransformer: TypeTransformer
   )(implicit ctx: WasmContext, pos: Position): Unit = {
     val emitter = prepareEmitter(
       functionID,
@@ -71,7 +72,8 @@ object FunctionEmitter {
       hasNewTarget = false,
       receiverType,
       paramDefs ::: restParam.toList,
-      transformResultType(resultType)
+      typeTransformer.transformResultType(resultType),
+      typeTransformer
     )
     emitter.genBody(body, resultType)
     emitter.fb.buildAndAddToModule()
@@ -83,7 +85,8 @@ object FunctionEmitter {
       postSuperStatsFunctionID: wanme.FunctionID,
       enclosingClassName: ClassName,
       jsClassCaptures: List[ParamDef],
-      ctor: JSConstructorDef
+      ctor: JSConstructorDef,
+      typeTransformer: TypeTransformer
   )(implicit ctx: WasmContext): Unit = {
     implicit val pos = ctor.pos
 
@@ -97,7 +100,7 @@ object FunctionEmitter {
 
     // Build the `preSuperStats` function
     locally {
-      val preSuperEnvStructTypeID = ctx.getClosureDataStructType(preSuperDecls.map(_.vtpe))
+      val preSuperEnvStructTypeID = ctx.getClosureDataStructType(preSuperDecls.map(_.vtpe), typeTransformer)
       val preSuperEnvType = watpe.RefType(preSuperEnvStructTypeID)
 
       val emitter = prepareEmitter(
@@ -109,7 +112,8 @@ object FunctionEmitter {
         hasNewTarget = true,
         receiverType = None,
         allCtorParams,
-        List(preSuperEnvType)
+        List(preSuperEnvType),
+        typeTransformer
       )
 
       emitter.genBlockStats(ctorBody.beforeSuper) {
@@ -137,7 +141,8 @@ object FunctionEmitter {
         hasNewTarget = true,
         receiverType = None,
         allCtorParams,
-        List(watpe.RefType.anyref) // a js.Array
+        List(watpe.RefType.anyref), // a js.Array
+        typeTransformer
       )
       emitter.genBody(JSArrayConstr(ctorBody.superCall.args), AnyType)
       emitter.fb.buildAndAddToModule()
@@ -154,7 +159,8 @@ object FunctionEmitter {
         hasNewTarget = true,
         receiverType = Some(watpe.RefType.anyref),
         allCtorParams,
-        List(watpe.RefType.anyref)
+        List(watpe.RefType.anyref),
+        typeTransformer
       )
       emitter.genBody(Block(ctorBody.afterSuper), AnyType)
       emitter.fb.buildAndAddToModule()
@@ -170,7 +176,8 @@ object FunctionEmitter {
       hasNewTarget: Boolean,
       receiverType: Option[watpe.Type],
       paramDefs: List[ParamDef],
-      resultTypes: List[watpe.Type]
+      resultTypes: List[watpe.Type],
+      typeTransformer: TypeTransformer
   )(implicit ctx: WasmContext, pos: Position): FunctionEmitter = {
     val fb = new FunctionBuilder(ctx.moduleBuilder, functionID, originalName, pos)
 
@@ -178,7 +185,7 @@ object FunctionEmitter {
         captureParamName: String,
         captureLikes: List[(LocalName, Type)]
     ): Env = {
-      val dataStructTypeID = ctx.getClosureDataStructType(captureLikes.map(_._2))
+      val dataStructTypeID = ctx.getClosureDataStructType(captureLikes.map(_._2), typeTransformer)
       val param = fb.addParam(captureParamName, watpe.RefType(dataStructTypeID))
       val env: List[(LocalName, VarStorage)] = for {
         ((name, _), idx) <- captureLikes.zipWithIndex
@@ -224,7 +231,7 @@ object FunctionEmitter {
     val normalParamsEnv: Env = paramDefs.map { paramDef =>
       val param = fb.addParam(
         paramDef.originalName.orElse(paramDef.name.name),
-        transformLocalType(paramDef.ptpe)
+        typeTransformer.transformLocalType(paramDef.ptpe)
       )
       paramDef.name.name -> VarStorage.Local(param)
     }.toMap
@@ -238,7 +245,8 @@ object FunctionEmitter {
       enclosingClassName,
       newTargetStorage,
       receiverStorage,
-      fullEnv
+      fullEnv,
+      typeTransformer
     )
   }
 
@@ -277,9 +285,11 @@ private class FunctionEmitter private (
     enclosingClassName: Option[ClassName],
     _newTargetStorage: Option[FunctionEmitter.VarStorage.Local],
     _receiverStorage: Option[FunctionEmitter.VarStorage.Local],
-    paramsEnv: FunctionEmitter.Env
+    paramsEnv: FunctionEmitter.Env,
+    typeTransformer: TypeTransformer
 )(implicit ctx: WasmContext) {
   import FunctionEmitter._
+  import typeTransformer._
 
   private var closureIdx: Int = 0
   private var currentEnv: Env = paramsEnv
@@ -633,7 +643,7 @@ private class FunctionEmitter private (
       addSyntheticLocal(watpe.RefType.any)
 
     val proxyId = ctx.getReflectiveProxyId(methodName)
-    val funcTypeID = ctx.tableFunctionType(methodName)
+    val funcTypeID = ctx.tableFunctionType(methodName, typeTransformer)
 
     /* We only need to handle calls on non-hijacked classes. For hijacked
      * classes, the compiler already emits the appropriate dispatch at the IR
@@ -930,7 +940,7 @@ private class FunctionEmitter private (
         genTypeID.forITable(receiverClassInfo.name),
         genFieldID.forMethodTableEntry(methodName)
       )
-      fb += wa.CallRef(ctx.tableFunctionType(methodName))
+      fb += wa.CallRef(ctx.tableFunctionType(methodName, typeTransformer))
     }
 
     // Generates a vtable-based dispatch.
@@ -946,7 +956,7 @@ private class FunctionEmitter private (
         genTypeID.forVTable(receiverClassName),
         genFieldID.forMethodTableEntry(methodName)
       )
-      fb += wa.CallRef(ctx.tableFunctionType(methodName))
+      fb += wa.CallRef(ctx.tableFunctionType(methodName, typeTransformer))
     }
 
     if (receiverClassInfo.isInterface)
@@ -2578,7 +2588,7 @@ private class FunctionEmitter private (
 
     val hasThis = !arrow
     val hasRestParam = restParam.isDefined
-    val dataStructTypeID = ctx.getClosureDataStructType(captureParams.map(_.ptpe))
+    val dataStructTypeID = ctx.getClosureDataStructType(captureParams.map(_.ptpe), typeTransformer)
 
     // Define the function where captures are reified as a `__captureData` argument.
     val closureFuncOrigName = genClosureFuncOriginalName()
@@ -2592,7 +2602,8 @@ private class FunctionEmitter private (
       params,
       restParam,
       body,
-      resultType = AnyType
+      resultType = AnyType,
+      typeTransformer
     )(ctx, tree.pos)
 
     markPosition(tree)

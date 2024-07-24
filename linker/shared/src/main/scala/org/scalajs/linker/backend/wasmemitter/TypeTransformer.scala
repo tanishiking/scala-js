@@ -18,8 +18,10 @@ import org.scalajs.ir.Types._
 import org.scalajs.linker.backend.webassembly.{Types => watpe}
 
 import VarGen._
+import org.scalajs.linker.backend.webassembly.Types
+import org.scalajs.linker.backend.webassembly.Types.RefType.nullable
 
-object TypeTransformer {
+trait TypeTransformer {
 
   /** Transforms an IR type for a local definition (including parameters).
    *
@@ -59,6 +61,9 @@ object TypeTransformer {
     }
   }
 
+  val stringType: watpe.Type
+  val boxedStringType: watpe.Type
+
   /** Transforms a value type to a unique Wasm type.
    *
    *  This method cannot be used for `void` and `nothing`, since they have no corresponding Wasm
@@ -67,8 +72,10 @@ object TypeTransformer {
   def transformType(tpe: Type)(implicit ctx: WasmContext): watpe.Type = {
     tpe match {
       case AnyType                => watpe.RefType.anyref
+      case ClassType(className) if className == BoxedStringClass => boxedStringType
       case ClassType(className)   => transformClassType(className)
-      case StringType | UndefType => watpe.RefType.any
+      case StringType             => stringType
+      case UndefType              => watpe.RefType.any
       case tpe: PrimTypeWithRef   => transformPrimType(tpe)
 
       case tpe: ArrayType =>
@@ -112,5 +119,17 @@ object TypeTransformer {
         throw new IllegalArgumentException(
             s"${tpe.show()} does not have a corresponding Wasm type")
     }
+  }
+}
+
+object TypeTransformer {
+  object JSTypeTransformer extends TypeTransformer {
+    override val stringType: Types.Type = watpe.RefType.any
+    override val boxedStringType: Types.Type = watpe.RefType.anyref
+  }
+
+  object WasmTypeTransformer extends TypeTransformer {
+    override val stringType: Types.Type = watpe.RefType(genTypeID.i16Array)
+    override val boxedStringType: Types.Type = watpe.RefType.nullable(genTypeID.i16Array)
   }
 }
