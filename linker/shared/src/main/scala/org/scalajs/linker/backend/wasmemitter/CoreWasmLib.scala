@@ -612,6 +612,11 @@ object CoreWasmLib {
     genSearchReflectiveProxy()
     genArrayCloneFunctions()
     genJSStringBuiltins()
+    genWasmStringConcat()
+    genCreateJSStringFromArray()
+    genCreateArrayFromJSString()
+    genNonNullString()
+    genArrayEquals()
   }
 
   private def newFunctionBuilder(functionID: FunctionID, originalName: OriginalName)(
@@ -1974,6 +1979,7 @@ object CoreWasmLib {
         },
         List(JSValueTypeString) -> { () =>
           fb += LocalGet(objNonNullLocal)
+          fb += Call(genFunctionID.createArrayFromJSString)
           fb += Call(
             genFunctionID.forMethod(Public, BoxedStringClass, hashCodeMethodName)
           )
@@ -2001,6 +2007,7 @@ object CoreWasmLib {
             fb += LocalGet(objNonNullLocal)
             fb += Call(genFunctionID.symbolDescription)
             fb += BrOnNull(descriptionIsNullLabel)
+            fb += Call(genFunctionID.createArrayFromJSString)
             fb += Call(
               genFunctionID.forMethod(Public, BoxedStringClass, hashCodeMethodName)
             )
@@ -2239,4 +2246,185 @@ object CoreWasmLib {
     fb.buildAndAddToModule()
   }
 
+  // TODO: do not use js string concat
+  private def genWasmStringConcat()(implicit ctx: WasmContext): Unit = {
+    import VarGen.genTypeID.i16Array
+
+    val fb = newFunctionBuilder(genFunctionID.wasmStringConcat)
+    val arr1Param = fb.addParam("arr1param", RefType(i16Array))
+    val arr2Param = fb.addParam("arr2param", RefType(i16Array))
+    val dest = fb.addLocal("result", RefType(i16Array))
+    fb.setResultType(RefType(i16Array))
+
+    fb += LocalGet(arr1Param)
+    fb += ArrayLen
+    fb += LocalGet(arr2Param)
+    fb += ArrayLen
+    fb += I32Add
+    fb += ArrayNewDefault(genTypeID.i16Array)
+    fb += LocalSet(dest)
+
+    fb += LocalGet(dest) // dest
+    fb += I32Const(0) // dest_offset
+    fb += LocalGet(arr1Param) // src
+    fb += I32Const(0) // src_offset
+    fb ++= List(LocalGet(arr1Param), ArrayLen) //size
+    fb += ArrayCopy(genTypeID.i16Array, genTypeID.i16Array)
+
+    fb += LocalGet(dest) // dest
+    fb ++= List(LocalGet(arr1Param), ArrayLen) // dest_offset
+    fb += LocalGet(arr2Param) // src
+    fb += I32Const(0) // src_offset
+    fb ++= List(LocalGet(arr2Param), ArrayLen) //size
+    fb += ArrayCopy(genTypeID.i16Array, genTypeID.i16Array)
+
+    fb += LocalGet(dest)
+
+    fb.buildAndAddToModule()
+  }
+
+  // (ref any) -> (ref (array (mut i16)))
+  private def genCreateArrayFromJSString()(implicit ctx: WasmContext): Unit = {
+    val fb = newFunctionBuilder(genFunctionID.createArrayFromJSString)
+    val strParam = fb.addParam("str", RefType.any)
+    val result = fb.addLocal("result", RefType(genTypeID.i16Array))
+    fb.setResultType(RefType(genTypeID.i16Array))
+
+    fb += LocalGet(strParam)
+    fb += ExternConvertAny // extern
+
+    // allocate mutable i16 array
+    fb += LocalGet(strParam)
+    fb += Call(genFunctionID.stringLength) // str.length
+    fb += ArrayNewDefault(genTypeID.i16Array) // (ref (array (mut i16)))
+    fb += LocalTee(result)
+
+    // start
+    fb += I32Const(0)
+
+    fb += Call(genFunctionID.intoCharCodeArray) // i32 (number of char codes written)
+    fb += Drop
+
+    fb += LocalGet(result)
+
+    fb.buildAndAddToModule()
+  }
+
+  // (ref (array (mut i16))) -> (ref any)
+  private def genCreateJSStringFromArray()(implicit ctx: WasmContext): Unit = {
+    val fb = newFunctionBuilder(genFunctionID.createJSStringFromArray)
+    val arrayParam = fb.addParam("array", RefType(genTypeID.i16Array))
+    fb.setResultType(RefType.any)
+
+    fb += LocalGet(arrayParam)
+
+    // start
+    fb += I32Const(0)
+
+    // end
+    fb += LocalGet(arrayParam)
+    fb += ArrayLen
+
+    fb += Call(genFunctionID.fromCharCodeArray) // (ref extern)
+    fb += AnyConvertExtern // (ref any)
+
+    fb.buildAndAddToModule()
+  }
+
+  // (ref null (array (mut i16))) -> (ref (array (mut i16)))
+  private def genNonNullString()(implicit ctx: WasmContext): Unit = {
+    val fb = newFunctionBuilder(genFunctionID.nonNullString)
+    val strParam = fb.addParam("str", RefType.nullable(genTypeID.i16Array))
+    fb.setResultType(RefType(genTypeID.i16Array))
+
+    fb.block(RefType(genTypeID.i16Array)) { labelNonNull =>
+      fb += LocalGet(strParam)
+      fb += BrOnNonNull(labelNonNull)
+      fb ++= ctx.stringPool.getConstantStringInstr("null")
+      fb += Call(genFunctionID.createArrayFromJSString)
+    }
+
+    fb.buildAndAddToModule()
+  }
+
+  private def genArrayEquals()(implicit ctx: WasmContext): Unit = {
+    val fb = newFunctionBuilder(genFunctionID.arrayEquals)
+    val arr1Param = fb.addParam("arr1", RefType.nullable(genTypeID.i16Array))
+    val arr2Param = fb.addParam("arr2", RefType.nullable(genTypeID.i16Array))
+
+    val len1 = fb.addLocal("len1", Int32)
+    val len2 = fb.addLocal("len2", Int32)
+    val iLocal = fb.addLocal("i", Int32)
+
+    fb.setResultType(Int32)
+
+    // Check if both arrays are null
+    fb += LocalGet(arr1Param)
+    fb += RefIsNull
+    fb += LocalGet(arr2Param)
+    fb += RefIsNull
+    fb += I32And
+    fb.ifThen() {
+      fb += I32Const(1)
+      fb += Return
+    }
+
+    // Check if one of the arrays is null
+    fb += LocalGet(arr1Param)
+    fb += RefIsNull
+    fb += LocalGet(arr2Param)
+    fb += RefIsNull
+    fb += I32Or
+    fb.ifThen() {
+      fb += I32Const(0)
+      fb += Return
+    }
+
+    // length
+    fb += LocalGet(arr1Param)
+    fb += ArrayLen
+    fb += LocalTee(len1)
+    fb += LocalGet(arr2Param)
+    fb += ArrayLen
+    fb += LocalTee(len2)
+
+    // compare length
+    fb += I32Ne
+    fb.ifThen() {
+      fb += I32Const(0)
+      fb += Return
+    }
+
+    // compare elements
+    fb += I32Const(0)
+    fb += LocalSet(iLocal)
+    fb.whileLoop() {
+      fb += LocalGet(iLocal)
+      fb += LocalGet(len1)
+      fb += I32Ne
+    } {
+      fb += LocalGet(arr1Param)
+      fb += LocalGet(iLocal)
+      fb += ArrayGetU(genTypeID.i16Array)
+
+      fb += LocalGet(arr2Param)
+      fb += LocalGet(iLocal)
+      fb += ArrayGetU(genTypeID.i16Array)
+
+      fb += I32Ne
+      fb.ifThen() {
+        fb += I32Const(0)
+        fb += Return
+      }
+
+      // i := i + 1
+      fb += LocalGet(iLocal)
+      fb += I32Const(1)
+      fb += I32Add
+      fb += LocalSet(iLocal)
+    }
+    fb += I32Const(1)
+
+    fb.buildAndAddToModule()
+  }
 }

@@ -23,6 +23,8 @@ import org.scalajs.linker.backend.webassembly.Types.RefType.nullable
 
 trait TypeTransformer {
 
+  val useWasmString: Boolean
+
   /** Transforms an IR type for a local definition (including parameters).
    *
    *  `void` is not a valid input for this method. It is rejected by the
@@ -124,11 +126,13 @@ trait TypeTransformer {
 
 object TypeTransformer {
   object JSTypeTransformer extends TypeTransformer {
+    override val useWasmString: Boolean = false
     override val stringType: Types.Type = watpe.RefType.any
     override val boxedStringType: Types.Type = watpe.RefType.anyref
   }
 
   object WasmTypeTransformer extends TypeTransformer {
+    override val useWasmString: Boolean = true
     override val stringType: Types.Type = watpe.RefType(genTypeID.i16Array)
     override val boxedStringType: Types.Type = watpe.RefType.nullable(genTypeID.i16Array)
   }

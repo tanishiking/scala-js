@@ -75,7 +75,7 @@ object FunctionEmitter {
       typeTransformer.transformResultType(resultType),
       typeTransformer
     )
-    emitter.genBody(body, resultType)
+    emitter.genBody(body, resultType)(typeTransformer)
     emitter.fb.buildAndAddToModule()
   }
 
@@ -125,7 +125,7 @@ object FunctionEmitter {
           emitter.fb += wa.LocalGet(localID)
         }
         emitter.fb += wa.StructNew(preSuperEnvStructTypeID)
-      }
+      }(typeTransformer)
 
       emitter.fb.buildAndAddToModule()
     }
@@ -144,7 +144,7 @@ object FunctionEmitter {
         List(watpe.RefType.anyref), // a js.Array
         typeTransformer
       )
-      emitter.genBody(JSArrayConstr(ctorBody.superCall.args), AnyType)
+      emitter.genBody(JSArrayConstr(ctorBody.superCall.args), AnyType)(typeTransformer)
       emitter.fb.buildAndAddToModule()
     }
 
@@ -162,7 +162,7 @@ object FunctionEmitter {
         List(watpe.RefType.anyref),
         typeTransformer
       )
-      emitter.genBody(Block(ctorBody.afterSuper), AnyType)
+      emitter.genBody(Block(ctorBody.afterSuper), AnyType)(typeTransformer)
       emitter.fb.buildAndAddToModule()
     }
   }
@@ -246,7 +246,6 @@ object FunctionEmitter {
       newTargetStorage,
       receiverStorage,
       fullEnv,
-      typeTransformer
     )
   }
 
@@ -286,10 +285,9 @@ private class FunctionEmitter private (
     _newTargetStorage: Option[FunctionEmitter.VarStorage.Local],
     _receiverStorage: Option[FunctionEmitter.VarStorage.Local],
     paramsEnv: FunctionEmitter.Env,
-    typeTransformer: TypeTransformer
+    // typeTransformer: TypeTransformer
 )(implicit ctx: WasmContext) {
   import FunctionEmitter._
-  import typeTransformer._
 
   private var closureIdx: Int = 0
   private var currentEnv: Env = paramsEnv
@@ -337,13 +335,13 @@ private class FunctionEmitter private (
   private def markPosition(tree: Tree): Unit =
     markPosition(tree.pos)
 
-  def genBody(tree: Tree, expectedType: Type): Unit =
+  def genBody(tree: Tree, expectedType: Type)(implicit typeTransformer: TypeTransformer): Unit =
     genTree(tree, expectedType)
 
-  def genTreeAuto(tree: Tree): Unit =
+  def genTreeAuto(tree: Tree)(implicit typeTransformer: TypeTransformer): Unit =
     genTree(tree, tree.tpe)
 
-  def genTree(tree: Tree, expectedType: Type): Unit = {
+  def genTree(tree: Tree, expectedType: Type)(implicit typeTransformer: TypeTransformer): Unit = {
     val generatedType: Type = tree match {
       case t: Literal             => genLiteral(t, expectedType)
       case t: UnaryOp             => genUnaryOp(t)
@@ -461,7 +459,7 @@ private class FunctionEmitter private (
     }
   }
 
-  private def genAssign(tree: Assign): Type = {
+  private def genAssign(tree: Assign)(implicit typeTransformer: TypeTransformer): Type = {
     val Assign(lhs, rhs) = tree
 
     lhs match {
@@ -579,7 +577,7 @@ private class FunctionEmitter private (
     NoType
   }
 
-  private def genApply(tree: Apply): Type = {
+  private def genApply(tree: Apply)(implicit typeTransformer: TypeTransformer): Type = {
     val Apply(flags, receiver, method, args) = tree
 
     receiver.tpe match {
@@ -634,7 +632,7 @@ private class FunctionEmitter private (
     }
   }
 
-  private def genReflectiveCall(tree: Apply): Type = {
+  private def genReflectiveCall(tree: Apply)(implicit typeTransformer: TypeTransformer): Type = {
     val Apply(flags, receiver, MethodIdent(methodName), args) = tree
 
     assert(methodName.isReflectiveProxy)
@@ -685,7 +683,7 @@ private class FunctionEmitter private (
    *  we must use a statically resolved call instead.
    */
   private def genApplyWithDispatch(tree: Apply,
-      receiverClassInfo: WasmContext.ClassInfo): Type = {
+      receiverClassInfo: WasmContext.ClassInfo)(implicit typeTransformer: TypeTransformer): Type = {
 
     val Apply(flags, receiver, MethodIdent(methodName), args) = tree
 
@@ -770,7 +768,7 @@ private class FunctionEmitter private (
 
       assert(receiverClassInfo.kind != ClassKind.HijackedClass, receiverClassName)
 
-      val resultType = transformResultType(tree.tpe)
+      val resultType = typeTransformer.transformResultType(tree.tpe)
 
       fb.block(resultType) { labelDone =>
         def pushArgs(argsLocals: List[wanme.LocalID]): Unit =
@@ -806,7 +804,7 @@ private class FunctionEmitter private (
               for ((arg, typeRef) <- args.zip(methodName.paramTypeRefs)) yield {
                 val tpe = ctx.inferTypeFromTypeRef(typeRef)
                 genTree(arg, tpe)
-                val localID = addSyntheticLocal(transformLocalType(tpe))
+                val localID = addSyntheticLocal(typeTransformer.transformLocalType(tpe))
                 fb += wa.LocalSet(localID)
                 localID
               }
@@ -841,6 +839,7 @@ private class FunctionEmitter private (
           // By spec, toString() is special
           assert(argsLocals.isEmpty)
           fb += wa.Call(genFunctionID.jsValueToString)
+          if (typeTransformer.useWasmString) fb += wa.Call(genFunctionID.createArrayFromJSString)
         } else if (receiverClassName == JLNumberClass) {
           // the value must be a `number`, hence we can unbox to `double`
           genUnbox(DoubleType)
@@ -928,7 +927,7 @@ private class FunctionEmitter private (
    *  `unreachable` instruction when appropriate.
    */
   def genTableDispatch(receiverClassInfo: WasmContext.ClassInfo,
-      methodName: MethodName, receiverLocalForDispatch: wanme.LocalID): Unit = {
+      methodName: MethodName, receiverLocalForDispatch: wanme.LocalID)(implicit typeTransformer: TypeTransformer): Unit = {
     // Generates an itable-based dispatch.
     def genITableDispatch(): Unit = {
       fb += wa.LocalGet(receiverLocalForDispatch)
@@ -965,7 +964,7 @@ private class FunctionEmitter private (
       genVTableDispatch()
   }
 
-  private def genApplyStatically(tree: ApplyStatically): Type = {
+  private def genApplyStatically(tree: ApplyStatically)(implicit typeTransformer: TypeTransformer): Type = {
     val ApplyStatically(flags, receiver, className, MethodIdent(methodName), args) = tree
 
     receiver.tpe match {
@@ -1016,7 +1015,7 @@ private class FunctionEmitter private (
     }
   }
 
-  private def genApplyStatic(tree: ApplyStatic): Type = {
+  private def genApplyStatic(tree: ApplyStatic)(implicit typeTransformer: TypeTransformer): Type = {
     val ApplyStatic(flags, className, MethodIdent(methodName), args) = tree
 
     genArgs(args, methodName)
@@ -1035,14 +1034,14 @@ private class FunctionEmitter private (
         s"Unexpected $tree at ${tree.pos}; multiple modules are not supported yet")
   }
 
-  private def genArgs(args: List[Tree], methodName: MethodName): Unit = {
+  private def genArgs(args: List[Tree], methodName: MethodName)(implicit typeTransformer: TypeTransformer): Unit = {
     for ((arg, paramTypeRef) <- args.zip(methodName.paramTypeRefs)) {
       val paramType = ctx.inferTypeFromTypeRef(paramTypeRef)
       genTree(arg, paramType)
     }
   }
 
-  private def genLiteral(tree: Literal, expectedType: Type): Type = {
+  private def genLiteral(tree: Literal, expectedType: Type)(implicit typeTransformer: TypeTransformer): Type = {
     if (expectedType == NoType) {
       /* Since all literals are pure, we can always get rid of them.
        * This is mostly useful for the argument of `Return` nodes that target a
@@ -1070,6 +1069,7 @@ private class FunctionEmitter private (
 
         case StringLiteral(v) =>
           fb ++= ctx.stringPool.getConstantStringInstr(v)
+          if (typeTransformer.useWasmString) fb += wa.Call(genFunctionID.createArrayFromJSString)
 
         case ClassOf(typeRef) =>
           genLoadTypeData(fb, typeRef)
@@ -1080,7 +1080,7 @@ private class FunctionEmitter private (
     }
   }
 
-  private def genSelect(tree: Select): Type = {
+  private def genSelect(tree: Select)(implicit typeTransformer: TypeTransformer): Type = {
     val Select(qualifier, FieldIdent(fieldName)) = tree
 
     val className = fieldName.className
@@ -1115,7 +1115,7 @@ private class FunctionEmitter private (
     tree.tpe
   }
 
-  private def genStoreModule(tree: StoreModule): Type = {
+  private def genStoreModule(tree: StoreModule)(implicit typeTransformer: TypeTransformer): Type = {
     val className = enclosingClassName.getOrElse {
       throw new AssertionError(s"Cannot emit $tree at ${tree.pos} without enclosing class name")
     }
@@ -1135,7 +1135,7 @@ private class FunctionEmitter private (
     tree.tpe
   }
 
-  private def genUnaryOp(tree: UnaryOp): Type = {
+  private def genUnaryOp(tree: UnaryOp)(implicit typeTransformer: TypeTransformer): Type = {
     import UnaryOp._
 
     val UnaryOp(op, lhs) = tree
@@ -1188,13 +1188,17 @@ private class FunctionEmitter private (
 
       // String.length
       case String_length =>
-        fb += wa.Call(genFunctionID.stringLength)
+        if (typeTransformer.useWasmString) {
+          fb += wa.ArrayLen
+        } else {
+          fb += wa.Call(genFunctionID.stringLength)
+        }
     }
 
     tree.tpe
   }
 
-  private def genBinaryOp(tree: BinaryOp): Type = {
+  private def genBinaryOp(tree: BinaryOp)(implicit typeTransformer: TypeTransformer): Type = {
     import BinaryOp._
 
     val BinaryOp(op, lhs, rhs) = tree
@@ -1280,7 +1284,11 @@ private class FunctionEmitter private (
         genTree(lhs, StringType)
         genTree(rhs, IntType)
         markPosition(tree)
-        fb += wa.Call(genFunctionID.stringCharAt)
+        if (typeTransformer.useWasmString) {
+          fb += wa.ArrayGetU(genTypeID.i16Array)
+        } else {
+          fb += wa.Call(genFunctionID.stringCharAt)
+        }
         CharType
 
       case _ =>
@@ -1292,7 +1300,7 @@ private class FunctionEmitter private (
     }
   }
 
-  private def genEq(tree: BinaryOp): Type = {
+  private def genEq(tree: BinaryOp)(implicit typeTransformer: TypeTransformer): Type = {
     import BinaryOp.{===, !==}
 
     val BinaryOp(op, lhs, rhs) = tree
@@ -1300,12 +1308,70 @@ private class FunctionEmitter private (
 
     // TODO Optimize this when the operands have a better type than `any`
 
-    genTree(lhs, AnyType)
-    genTree(rhs, AnyType)
+    if (typeTransformer.useWasmString) {
+      val lhsLocal = addSyntheticLocal(watpe.RefType.anyref)
+      val rhsLocal = addSyntheticLocal(watpe.RefType.anyref)
 
-    markPosition(tree)
+      genTree(lhs, AnyType)
+      fb += wa.LocalSet(lhsLocal)
+      genTree(rhs, AnyType)
+      fb += wa.LocalSet(rhsLocal)
 
-    fb += wa.Call(genFunctionID.is)
+      // maybe one of the lhs and rhs can be i16array?
+      fb.block(watpe.Int32) { doneLabel =>
+        // Block to handle the case where both are i16Array
+        fb.block(watpe.RefType.anyref) { notI16ArrayLabel =>
+          // Check if lhs is i16Array
+          fb += wa.LocalGet(lhsLocal)
+          fb += wa.BrOnCastFail(
+            notI16ArrayLabel,
+            watpe.RefType.anyref,
+            watpe.RefType.nullable(genTypeID.i16Array)
+          )
+          // Check if rhs is i16Array
+          fb += wa.LocalGet(rhsLocal)
+          fb += wa.BrOnCastFail(
+            notI16ArrayLabel,
+            watpe.RefType.anyref,
+            watpe.RefType.nullable(genTypeID.i16Array)
+          )
+          // Both are i16Array, call arrayEquals
+          fb += wa.Call(genFunctionID.arrayEquals)
+          fb += wa.Br(doneLabel)
+        } // end of block notI16ArrayLabel
+        fb += wa.Drop
+
+        // lhs or rhs (or both) are not i16Array
+        fb.block(watpe.RefType.nullable(genTypeID.i16Array)) { i16ArrayLabel =>
+          fb += wa.LocalGet(lhsLocal)
+          fb += wa.BrOnCast(
+            i16ArrayLabel,
+            watpe.RefType.anyref,
+            watpe.RefType.nullable(genTypeID.i16Array)
+          )
+          fb += wa.LocalGet(rhsLocal)
+          fb += wa.BrOnCast(
+            i16ArrayLabel,
+            watpe.RefType.anyref,
+            watpe.RefType.nullable(genTypeID.i16Array)
+          )
+          // both lhs and rhs are not i16Array
+          fb += wa.Call(genFunctionID.is)
+          fb += wa.Br(doneLabel)
+        } // end of i16ArrayLabel
+        // one of them is i16Array and one is not, return 0
+        fb += wa.Drop
+        fb += wa.I32Const(0)
+      } // end of block doneLabel
+
+    } else {
+      genTree(lhs, AnyType)
+      genTree(rhs, AnyType)
+
+      markPosition(tree)
+
+      fb += wa.Call(genFunctionID.is)
+    }
 
     if (op == !==)
       fb += wa.I32Eqz
@@ -1371,7 +1437,7 @@ private class FunctionEmitter private (
     }
   }
 
-  private def genStringConcat(tree: BinaryOp): Type = {
+  private def genStringConcat(tree: BinaryOp)(implicit typeTransformer: TypeTransformer): Type = {
     val BinaryOp(op, lhs, rhs) = tree
     assert(op == BinaryOp.String_+)
 
@@ -1384,13 +1450,17 @@ private class FunctionEmitter private (
         genToStringForConcat(lhs)
         genToStringForConcat(rhs)
         markPosition(tree)
-        fb += wa.Call(genFunctionID.stringConcat)
+        if (typeTransformer.useWasmString)
+          fb += wa.Call(genFunctionID.wasmStringConcat)
+        else
+          fb += wa.Call(genFunctionID.stringConcat)
     }
 
     StringType
   }
 
-  private def genToStringForConcat(tree: Tree): Unit = {
+  private def genToStringForConcat(tree: Tree)(implicit typeTransformer: TypeTransformer): Unit = {
+    // if useWasmString, the generated code should return (ref i16Array), otherwise (ref any)
     def genWithDispatch(isAncestorOfHijackedClass: Boolean): Unit = {
       /* Somewhat duplicated from genApplyNonPrim, but specialized for
        * `toString`, and where the handling of `null` is different.
@@ -1435,44 +1505,81 @@ private class FunctionEmitter private (
           fb ++= ctx.stringPool.getConstantStringInstr("null")
         }
       } else {
-        /* Dispatch where the receiver can be a JS value.
-         *
-         * The overall structure of the generated code is as follows:
-         *
-         * block (ref any) $done
-         *   block anyref $notOurObject
-         *     load receiver
-         *     br_on_cast_fail anyref (ref $java.lang.Object) $notOurObject
-         *     generate standard table-based dispatch
-         *     br_on_non_null $done
-         *     ref.null any
-         *   end $notOurObject
-         *   call the JS helper, also handles `null`
-         * end $done
-         */
+        if (typeTransformer.useWasmString) {
+          fb.block(watpe.RefType(genTypeID.i16Array)) { labelDone =>
+            fb.block(watpe.RefType.anyref) { labelNotWasmString =>
+              fb.block(watpe.RefType.anyref) { labelNotOurObject =>
+                // Load receiver
+                genTreeAuto(tree)
 
-        fb.block(watpe.RefType.any) { labelDone =>
-          // First try the case where the value is one of our objects
-          fb.block(watpe.RefType.anyref) { labelNotOurObject =>
-            // Load receiver
-            genTreeAuto(tree)
+                markPosition(tree)
 
-            markPosition(tree)
+                fb += wa.BrOnCastFail(
+                  labelNotOurObject,
+                  watpe.RefType.anyref,
+                  watpe.RefType(genTypeID.ObjectStruct)
+                )
+                fb += wa.LocalTee(receiverLocalForDispatch)
+                genTableDispatch(objectClassInfo, toStringMethodName, receiverLocalForDispatch)
+                fb += wa.BrOnNonNull(labelDone)
+                fb += wa.RefNull(watpe.HeapType.Any)
+              } // end block labelNotOurObject
 
-            fb += wa.BrOnCastFail(
-              labelNotOurObject,
-              watpe.RefType.anyref,
-              watpe.RefType(genTypeID.ObjectStruct)
-            )
-            fb += wa.LocalTee(receiverLocalForDispatch)
-            genTableDispatch(objectClassInfo, toStringMethodName, receiverLocalForDispatch)
-            fb += wa.BrOnNonNull(labelDone)
-            fb += wa.RefNull(watpe.HeapType.Any)
-          } // end block labelNotOurObject
+              // maybe wasm string (i16Array)?
+              fb += wa.BrOnCastFail(
+                labelNotWasmString,
+                watpe.RefType.anyref,
+                watpe.RefType.nullable(genTypeID.i16Array)
+              )
+              fb += wa.Call(genFunctionID.nonNullString)
+              fb += wa.Br(labelDone)
+            } // end block labelNotWasmString
 
-          // Now we have a value that is not one of our objects; the anyref is still on the stack
-          fb += wa.Call(genFunctionID.jsValueToStringForConcat)
-        } // end block labelDone
+            // Now we have a value that is not one of our objects / wasm string; the anyref is still on the stack
+            fb += wa.Call(genFunctionID.jsValueToStringForConcat)
+            fb += wa.Call(genFunctionID.createArrayFromJSString)
+          }
+
+        } else {
+          /* Dispatch where the receiver can be a JS value.
+           *
+           * The overall structure of the generated code is as follows:
+           *
+           * block (ref any) $done
+           *   block anyref $notOurObject
+           *     load receiver
+           *     br_on_cast_fail anyref (ref $java.lang.Object) $notOurObject
+           *     generate standard table-based dispatch
+           *     br_on_non_null $done
+           *     ref.null any
+           *   end $notOurObject
+           *   call the JS helper, also handles `null`
+           * end $done
+           */
+
+          fb.block(watpe.RefType.any) { labelDone =>
+            // First try the case where the value is one of our objects
+            fb.block(watpe.RefType.anyref) { labelNotOurObject =>
+              // Load receiver
+              genTreeAuto(tree)
+
+              markPosition(tree)
+
+              fb += wa.BrOnCastFail(
+                labelNotOurObject,
+                watpe.RefType.anyref,
+                watpe.RefType(genTypeID.ObjectStruct)
+              )
+              fb += wa.LocalTee(receiverLocalForDispatch)
+              genTableDispatch(objectClassInfo, toStringMethodName, receiverLocalForDispatch)
+              fb += wa.BrOnNonNull(labelDone)
+              fb += wa.RefNull(watpe.HeapType.Any)
+            } // end block labelNotOurObject
+
+            // Now we have a value that is not one of our objects; the anyref is still on the stack
+            fb += wa.Call(genFunctionID.jsValueToStringForConcat)
+          } // end block labelDone
+        }
       }
     }
 
@@ -1487,19 +1594,26 @@ private class FunctionEmitter private (
             () // no-op
           case BooleanType =>
             fb += wa.Call(genFunctionID.booleanToString)
+            if (typeTransformer.useWasmString) fb += wa.Call(genFunctionID.createArrayFromJSString)
           case CharType =>
             fb += wa.Call(genFunctionID.charToString)
+            if (typeTransformer.useWasmString) fb += wa.Call(genFunctionID.createArrayFromJSString)
           case ByteType | ShortType | IntType =>
             fb += wa.Call(genFunctionID.intToString)
+            if (typeTransformer.useWasmString) fb += wa.Call(genFunctionID.createArrayFromJSString)
           case LongType =>
             fb += wa.Call(genFunctionID.longToString)
+            if (typeTransformer.useWasmString) fb += wa.Call(genFunctionID.createArrayFromJSString)
           case FloatType =>
             fb += wa.F64PromoteF32
             fb += wa.Call(genFunctionID.doubleToString)
+            if (typeTransformer.useWasmString) fb += wa.Call(genFunctionID.createArrayFromJSString)
           case DoubleType =>
             fb += wa.Call(genFunctionID.doubleToString)
+            if (typeTransformer.useWasmString) fb += wa.Call(genFunctionID.createArrayFromJSString)
           case NullType | UndefType =>
             fb += wa.Call(genFunctionID.jsValueToStringForConcat)
+            if (typeTransformer.useWasmString) fb += wa.Call(genFunctionID.createArrayFromJSString)
           case NothingType =>
             () // unreachable
           case NoType =>
@@ -1511,7 +1625,19 @@ private class FunctionEmitter private (
         // Common case for which we want to avoid the hijacked class dispatch
         genTreeAuto(tree)
         markPosition(tree)
-        fb += wa.Call(genFunctionID.jsValueToStringForConcat) // for `null`
+        // if useWasmString -> (ref null (array (mut i16)))
+        if (typeTransformer.useWasmString) {
+          val str = addSyntheticLocal(watpe.RefType.nullable(genTypeID.i16Array))
+          fb += wa.LocalSet(str)
+          fb.block(watpe.RefType(genTypeID.i16Array)) { nonNull =>
+            fb += wa.LocalGet(str)
+            fb += wa.BrOnNonNull(nonNull)
+            fb ++= ctx.stringPool.getConstantStringInstr("null") // (ref any)
+            fb += wa.Call(genFunctionID.createArrayFromJSString)
+          }
+        } else {
+          fb += wa.Call(genFunctionID.jsValueToStringForConcat) // for `null`
+        }
 
       case ClassType(className) =>
         genWithDispatch(ctx.getClassInfo(className).isAncestorOfHijackedClass)
@@ -1530,7 +1656,7 @@ private class FunctionEmitter private (
 
   private def genDivModByConstant[T](tree: BinaryOp, isDiv: Boolean,
       rhsValue: T, const: T => wa.Instr, sub: wa.Instr, mainOp: wa.Instr)(
-      implicit num: Numeric[T]): Type = {
+      implicit num: Numeric[T], typeTransformer: TypeTransformer): Type = {
     /* When we statically know the value of the rhs, we can avoid the
      * dynamic tests for division by zero and overflow. This is quite
      * common in practice.
@@ -1570,7 +1696,7 @@ private class FunctionEmitter private (
 
   private def genDivMod[T](tree: BinaryOp, isDiv: Boolean, const: T => wa.Instr,
       eqz: wa.Instr, eqInstr: wa.Instr, sub: wa.Instr, mainOp: wa.Instr)(
-      implicit num: Numeric[T]): Type = {
+      implicit num: Numeric[T], typeTransformer: TypeTransformer): Type = {
     /* Here we perform the same steps as in the static case, but using
      * value tests at run-time.
      */
@@ -1581,7 +1707,7 @@ private class FunctionEmitter private (
     assert(op == Int_/ || op == Int_% || op == Long_/ || op == Long_%)
 
     val tpe = tree.tpe
-    val wasmType = transformType(tpe)
+    val wasmType = typeTransformer.transformType(tpe)
 
     val lhsLocal = addSyntheticLocal(wasmType)
     val rhsLocal = addSyntheticLocal(wasmType)
@@ -1631,7 +1757,7 @@ private class FunctionEmitter private (
     fb += wa.Throw(genTagID.exception)
   }
 
-  private def genIsInstanceOf(tree: IsInstanceOf): Type = {
+  private def genIsInstanceOf(tree: IsInstanceOf)(implicit typeTransformer: TypeTransformer): Type = {
     val IsInstanceOf(expr, testType) = tree
 
     genTree(expr, AnyType)
@@ -1741,7 +1867,7 @@ private class FunctionEmitter private (
     BooleanType
   }
 
-  private def genAsInstanceOf(tree: AsInstanceOf): Type = {
+  private def genAsInstanceOf(tree: AsInstanceOf)(implicit typeTransformer: TypeTransformer): Type = {
     val AsInstanceOf(expr, targetTpe) = tree
 
     val sourceTpe = expr.tpe
@@ -1753,8 +1879,8 @@ private class FunctionEmitter private (
     } else {
       // By IR checker rules, targetTpe is none of NothingType, NullType, NoType or RecordType
 
-      val sourceWasmType = transformType(sourceTpe)
-      val targetWasmType = transformType(targetTpe)
+      val sourceWasmType = typeTransformer.transformType(sourceTpe)
+      val targetWasmType = typeTransformer.transformType(targetTpe)
 
       if (sourceWasmType == targetWasmType) {
         /* Common case where no cast is necessary at the Wasm level.
@@ -1778,6 +1904,9 @@ private class FunctionEmitter private (
             targetWasmType match {
               case watpe.RefType(true, watpe.HeapType.Any) =>
                 () // nothing to do
+              case watpe.RefType(_, heapType)
+                  if heapType == watpe.HeapType(genTypeID.i16Array) && typeTransformer.useWasmString =>
+                fb += wa.Call(genFunctionID.createArrayFromJSString)
               case targetWasmType: watpe.RefType =>
                 fb += wa.RefCast(targetWasmType)
               case _ =>
@@ -1796,7 +1925,7 @@ private class FunctionEmitter private (
    *
    *  The type left on the stack is non-nullable.
    */
-  private def genUnbox(targetTpe: PrimType): Unit = {
+  private def genUnbox(targetTpe: PrimType)(implicit typeTransformer: TypeTransformer): Unit = {
     targetTpe match {
       case UndefType =>
         fb += wa.Drop
@@ -1812,7 +1941,7 @@ private class FunctionEmitter private (
           if (targetTpe == CharType) SpecialNames.CharBoxClass
           else SpecialNames.LongBoxClass
         val fieldName = FieldName(boxClass, SpecialNames.valueFieldSimpleName)
-        val resultType = transformType(targetTpe)
+        val resultType = typeTransformer.transformType(targetTpe)
 
         fb.block(Sig(List(watpe.RefType.anyref), List(resultType))) { doneLabel =>
           fb.block(Sig(List(watpe.RefType.anyref), Nil)) { isNullLabel =>
@@ -1836,7 +1965,7 @@ private class FunctionEmitter private (
     }
   }
 
-  private def genGetClass(tree: GetClass): Type = {
+  private def genGetClass(tree: GetClass)(implicit typeTransformer: TypeTransformer): Type = {
     /* Unlike in `genApply` or `genStringConcat`, here we make no effort to
      * optimize known-primitive receivers. In practice, such cases would be
      * useless.
@@ -1897,7 +2026,7 @@ private class FunctionEmitter private (
     tree.tpe
   }
 
-  private def genVarDef(tree: VarDef): Type = {
+  private def genVarDef(tree: VarDef)(implicit typeTransformer: TypeTransformer): Type = {
     /* This is an isolated VarDef that is not in a Block.
      * Its scope is empty by construction, and therefore it need not be stored.
      */
@@ -1906,10 +2035,10 @@ private class FunctionEmitter private (
     NoType
   }
 
-  private def genIf(tree: If, expectedType: Type): Type = {
+  private def genIf(tree: If, expectedType: Type)(implicit typeTransformer: TypeTransformer): Type = {
     val If(cond, thenp, elsep) = tree
 
-    val ty = transformResultType(expectedType)
+    val ty = typeTransformer.transformResultType(expectedType)
     genTree(cond, BooleanType)
 
     markPosition(tree)
@@ -1934,7 +2063,7 @@ private class FunctionEmitter private (
     expectedType
   }
 
-  private def genWhile(tree: While): Type = {
+  private def genWhile(tree: While)(implicit typeTransformer: TypeTransformer): Type = {
     val While(cond, body) = tree
 
     cond match {
@@ -1965,7 +2094,7 @@ private class FunctionEmitter private (
     }
   }
 
-  private def genForIn(tree: ForIn): Type = {
+  private def genForIn(tree: ForIn)(implicit typeTransformer: TypeTransformer): Type = {
     /* This is tricky. In general, the body of a ForIn can be an arbitrary
      * statement, which can refer to the enclosing scope and its locals,
      * including for mutations. Unfortunately, there is no way to implement a
@@ -1999,10 +2128,10 @@ private class FunctionEmitter private (
     NoType
   }
 
-  private def genTryCatch(tree: TryCatch, expectedType: Type): Type = {
+  private def genTryCatch(tree: TryCatch, expectedType: Type)(implicit typeTransformer: TypeTransformer): Type = {
     val TryCatch(block, LocalIdent(errVarName), errVarOrigName, handler) = tree
 
-    val resultType = transformResultType(expectedType)
+    val resultType = typeTransformer.transformResultType(expectedType)
 
     if (UseLegacyExceptionsForTryCatch) {
       markPosition(tree)
@@ -2048,7 +2177,7 @@ private class FunctionEmitter private (
     expectedType
   }
 
-  private def genThrow(tree: Throw): Type = {
+  private def genThrow(tree: Throw)(implicit typeTransformer: TypeTransformer): Type = {
     val Throw(expr) = tree
 
     genTree(expr, AnyType)
@@ -2059,7 +2188,7 @@ private class FunctionEmitter private (
     NothingType
   }
 
-  private def genBlock(tree: Block, expectedType: Type): Type = {
+  private def genBlock(tree: Block, expectedType: Type)(implicit typeTransformer: TypeTransformer): Type = {
     val Block(stats) = tree
 
     genBlockStats(stats.init) {
@@ -2068,7 +2197,7 @@ private class FunctionEmitter private (
     expectedType
   }
 
-  final def genBlockStats(stats: List[Tree])(inner: => Unit): Unit = {
+  final def genBlockStats(stats: List[Tree])(inner: => Unit)(implicit typeTransformer: TypeTransformer): Unit = {
     val savedEnv = currentEnv
 
     for (stat <- stats) {
@@ -2076,7 +2205,7 @@ private class FunctionEmitter private (
         case VarDef(LocalIdent(name), originalName, vtpe, _, rhs) =>
           genTree(rhs, vtpe)
           markPosition(stat)
-          val local = fb.addLocal(originalName.orElse(name), transformLocalType(vtpe))
+          val local = fb.addLocal(originalName.orElse(name), typeTransformer.transformLocalType(vtpe))
           currentEnv = currentEnv.updated(name, VarStorage.Local(local))
           fb += wa.LocalSet(local)
         case _ =>
@@ -2089,7 +2218,7 @@ private class FunctionEmitter private (
     currentEnv = savedEnv
   }
 
-  private def genNew(tree: New): Type = {
+  private def genNew(tree: New)(implicit typeTransformer: TypeTransformer): Type = {
     val New(className, MethodIdent(ctorName), args) = tree
 
     genNewScalaClass(className, ctorName) {
@@ -2135,7 +2264,7 @@ private class FunctionEmitter private (
     ClassType(boxClassName)
   }
 
-  private def genIdentityHashCode(tree: IdentityHashCode): Type = {
+  private def genIdentityHashCode(tree: IdentityHashCode)(implicit typeTransformer: TypeTransformer): Type = {
     val IdentityHashCode(expr) = tree
 
     // TODO Avoid dispatch when we know a more precise type than any
@@ -2147,7 +2276,7 @@ private class FunctionEmitter private (
     IntType
   }
 
-  private def genWrapAsThrowable(tree: WrapAsThrowable): Type = {
+  private def genWrapAsThrowable(tree: WrapAsThrowable)(implicit typeTransformer: TypeTransformer): Type = {
     val WrapAsThrowable(expr) = tree
 
     val nonNullThrowableType = watpe.RefType(genTypeID.ThrowableStruct)
@@ -2183,7 +2312,7 @@ private class FunctionEmitter private (
     tree.tpe
   }
 
-  private def genUnwrapFromThrowable(tree: UnwrapFromThrowable): Type = {
+  private def genUnwrapFromThrowable(tree: UnwrapFromThrowable)(implicit typeTransformer: TypeTransformer): Type = {
     val UnwrapFromThrowable(expr) = tree
 
     fb.block(watpe.RefType.anyref) { doneLabel =>
@@ -2211,6 +2340,7 @@ private class FunctionEmitter private (
   }
 
   private def genJSNew(tree: JSNew): Type = {
+    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
     val JSNew(ctor, args) = tree
 
     genTree(ctor, AnyType)
@@ -2221,6 +2351,7 @@ private class FunctionEmitter private (
   }
 
   private def genJSSelect(tree: JSSelect): Type = {
+    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
     val JSSelect(qualifier, item) = tree
 
     genTree(qualifier, AnyType)
@@ -2231,6 +2362,7 @@ private class FunctionEmitter private (
   }
 
   private def genJSFunctionApply(tree: JSFunctionApply): Type = {
+    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
     val JSFunctionApply(fun, args) = tree
 
     genTree(fun, AnyType)
@@ -2241,6 +2373,7 @@ private class FunctionEmitter private (
   }
 
   private def genJSMethodApply(tree: JSMethodApply): Type = {
+    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
     val JSMethodApply(receiver, method, args) = tree
 
     genTree(receiver, AnyType)
@@ -2252,6 +2385,7 @@ private class FunctionEmitter private (
   }
 
   private def genJSImportCall(tree: JSImportCall): Type = {
+    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
     val JSImportCall(arg) = tree
 
     genTree(arg, AnyType)
@@ -2304,6 +2438,7 @@ private class FunctionEmitter private (
   }
 
   private def genJSDelete(tree: JSDelete): Type = {
+    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
     val JSDelete(qualifier, item) = tree
 
     genTree(qualifier, AnyType)
@@ -2314,6 +2449,7 @@ private class FunctionEmitter private (
   }
 
   private def genJSUnaryOp(tree: JSUnaryOp): Type = {
+    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
     val JSUnaryOp(op, lhs) = tree
 
     genTree(lhs, AnyType)
@@ -2323,6 +2459,7 @@ private class FunctionEmitter private (
   }
 
   private def genJSBinaryOp(tree: JSBinaryOp): Type = {
+    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
     val JSBinaryOp(op, lhs, rhs) = tree
 
     op match {
@@ -2370,6 +2507,7 @@ private class FunctionEmitter private (
   }
 
   private def genJSObjectConstr(tree: JSObjectConstr): Type = {
+    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
     val JSObjectConstr(fields) = tree
 
     markPosition(tree)
@@ -2401,6 +2539,7 @@ private class FunctionEmitter private (
   }
 
   private def genJSArgsArray(args: List[TreeOrJSSpread]): Unit = {
+    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
     fb += wa.Call(genFunctionID.jsNewArray)
     for (arg <- args) {
       arg match {
@@ -2420,7 +2559,7 @@ private class FunctionEmitter private (
     AnyType
   }
 
-  private def genArrayLength(tree: ArrayLength): Type = {
+  private def genArrayLength(tree: ArrayLength)(implicit typeTransformer: TypeTransformer): Type = {
     val ArrayLength(array) = tree
 
     genTreeAuto(array)
@@ -2450,7 +2589,7 @@ private class FunctionEmitter private (
     }
   }
 
-  private def genNewArray(tree: NewArray): Type = {
+  private def genNewArray(tree: NewArray)(implicit typeTransformer: TypeTransformer): Type = {
     val NewArray(arrayTypeRef, lengths) = tree
 
     if (lengths.isEmpty || lengths.size > arrayTypeRef.dimensions) {
@@ -2497,7 +2636,7 @@ private class FunctionEmitter private (
     tree.tpe
   }
 
-  private def genArraySelect(tree: ArraySelect): Type = {
+  private def genArraySelect(tree: ArraySelect)(implicit typeTransformer: TypeTransformer): Type = {
     val ArraySelect(array, index) = tree
 
     genTreeAuto(array)
@@ -2536,7 +2675,7 @@ private class FunctionEmitter private (
             // a primitive array always has the correct type
             ()
           case _ =>
-            transformType(tree.tpe) match {
+            typeTransformer.transformType(tree.tpe) match {
               case watpe.RefType.anyref =>
                 // nothing to do
                 ()
@@ -2561,7 +2700,7 @@ private class FunctionEmitter private (
     }
   }
 
-  private def genArrayValue(tree: ArrayValue): Type = {
+  private def genArrayValue(tree: ArrayValue)(implicit typeTransformer: TypeTransformer): Type = {
     val ArrayValue(arrayTypeRef, elems) = tree
 
     val expectedElemType = arrayTypeRef match {
@@ -2583,7 +2722,7 @@ private class FunctionEmitter private (
     tree.tpe
   }
 
-  private def genClosure(tree: Closure): Type = {
+  private def genClosure(tree: Closure)(implicit typeTransformer: TypeTransformer): Type = {
     val Closure(arrow, captureParams, params, restParam, body, captureValues) = tree
 
     val hasThis = !arrow
@@ -2635,7 +2774,7 @@ private class FunctionEmitter private (
     AnyType
   }
 
-  private def genClone(tree: Clone): Type = {
+  private def genClone(tree: Clone)(implicit typeTransformer: TypeTransformer): Type = {
     val Clone(expr) = tree
 
     val exprLocal = addSyntheticLocal(watpe.RefType(genTypeID.ObjectStruct))
@@ -2666,10 +2805,10 @@ private class FunctionEmitter private (
     tree.tpe
   }
 
-  private def genMatch(tree: Match, expectedType: Type): Type = {
+  private def genMatch(tree: Match, expectedType: Type)(implicit typeTransformer: TypeTransformer): Type = {
     val Match(selector, cases, defaultBody) = tree
 
-    val selectorLocal = addSyntheticLocal(transformType(selector.tpe))
+    val selectorLocal = addSyntheticLocal(typeTransformer.transformType(selector.tpe))
 
     genTreeAuto(selector)
 
@@ -2677,7 +2816,7 @@ private class FunctionEmitter private (
 
     fb += wa.LocalSet(selectorLocal)
 
-    fb.block(transformResultType(expectedType)) { doneLabel =>
+    fb.block(typeTransformer.transformResultType(expectedType)) { doneLabel =>
       fb.block() { defaultLabel =>
         val caseLabels = cases.map(c => c._1 -> fb.genLabel())
         for (caseLabel <- caseLabels)
@@ -2724,6 +2863,7 @@ private class FunctionEmitter private (
   }
 
   private def genCreateJSClass(tree: CreateJSClass): Type = {
+    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
     val CreateJSClass(className, captureValues) = tree
 
     val classInfo = ctx.getClassInfo(className)
@@ -2743,6 +2883,7 @@ private class FunctionEmitter private (
   }
 
   private def genJSPrivateSelect(tree: JSPrivateSelect): Type = {
+    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
     val JSPrivateSelect(qualifier, FieldIdent(fieldName)) = tree
 
     genTree(qualifier, AnyType)
@@ -2756,6 +2897,7 @@ private class FunctionEmitter private (
   }
 
   private def genJSSuperSelect(tree: JSSuperSelect): Type = {
+    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
     val JSSuperSelect(superClass, receiver, item) = tree
 
     genTree(superClass, AnyType)
@@ -2770,6 +2912,7 @@ private class FunctionEmitter private (
   }
 
   private def genJSSuperMethodCall(tree: JSSuperMethodCall): Type = {
+    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
     val JSSuperMethodCall(superClass, receiver, method, args) = tree
 
     genTree(superClass, AnyType)
@@ -2792,7 +2935,7 @@ private class FunctionEmitter private (
     AnyType
   }
 
-  private def genLinkTimeIf(tree: LinkTimeIf, expectedType: Type): Type = {
+  private def genLinkTimeIf(tree: LinkTimeIf, expectedType: Type)(implicit typeTransformer: TypeTransformer): Type = {
     if (ctx.coreSpec.linkTimeProperties.evaluateLinkTimeTree(tree.cond))
       genTree(tree.thenp, expectedType)
     else
@@ -3046,7 +3189,7 @@ private class FunctionEmitter private (
 
     /** Information about an enclosing `Labeled` block. */
     private final class LabeledEntry(val depth: Int,
-        val irLabelName: LabelName, val expectedType: Type) {
+        val irLabelName: LabelName, val expectedType: Type)(implicit typeTransformer: TypeTransformer) {
 
       /** The regular label for this `Labeled` block, used for `Return`s that do not cross a
        *  `TryFinally`.
@@ -3073,7 +3216,7 @@ private class FunctionEmitter private (
       def requireCrossInfo(): (Int, List[wanme.LocalID], wanme.LabelID) = {
         if (destinationTag == 0) {
           destinationTag = allocateDestinationTag()
-          val resultTypes = transformResultType(expectedType)
+          val resultTypes = typeTransformer.transformResultType(expectedType)
           resultLocals = resultTypes.map(addSyntheticLocal(_))
           crossLabel = fb.genLabel()
         }
@@ -3082,12 +3225,12 @@ private class FunctionEmitter private (
       }
     }
 
-    def genLabeled(tree: Labeled, expectedType: Type): Type = {
+    def genLabeled(tree: Labeled, expectedType: Type)(implicit typeTransformer: TypeTransformer): Type = {
       val Labeled(LabelIdent(labelName), tpe, body) = tree
 
       val entry = new LabeledEntry(currentUnwindingStackDepth, labelName, expectedType)
 
-      val ty = transformResultType(expectedType)
+      val ty = typeTransformer.transformResultType(expectedType)
 
       markPosition(tree)
 
@@ -3154,12 +3297,12 @@ private class FunctionEmitter private (
       expectedType
     }
 
-    def genTryFinally(tree: TryFinally, expectedType: Type): Type = {
+    def genTryFinally(tree: TryFinally, expectedType: Type)(implicit typeTransformer: TypeTransformer): Type = {
       val TryFinally(tryBlock, finalizer) = tree
 
       val entry = new TryFinallyEntry(currentUnwindingStackDepth)
 
-      val resultType = transformResultType(expectedType)
+      val resultType = typeTransformer.transformResultType(expectedType)
       val resultLocals = resultType.map(addSyntheticLocal(_))
 
       markPosition(tree)
@@ -3306,7 +3449,7 @@ private class FunctionEmitter private (
       }
     }
 
-    def genReturn(tree: Return): Type = {
+    def genReturn(tree: Return)(implicit typeTransformer: TypeTransformer): Type = {
       val Return(expr, LabelIdent(labelName)) = tree
 
       val targetEntry = enclosingLabeledBlocks(labelName)

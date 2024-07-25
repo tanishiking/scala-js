@@ -47,8 +47,17 @@ class ClassEmitter(coreSpec: CoreSpec) {
       genTypeDataGlobal(clazz.className, genTypeID.typeData, typeDataFieldValues, Nil)
     }
 
-    // TODO: switch transformer based on the kind
-    val typeTransformer = TypeTransformer.JSTypeTransformer
+    val typeTransformer = clazz.kind match {
+      // should we make `ClassKind.Interface` to use `WasmTypetransformer`?
+      // if the line is "case ClassKind.Class | ClassKind.ModuleClass =>"
+      // the tableFunctionType will create different types for Interface and Class (?)
+      // which leads to the type different between the type signature and actual type
+      case ClassKind.Class | ClassKind.ModuleClass | ClassKind.Interface |
+          ClassKind.HijackedClass =>
+        TypeTransformer.WasmTypeTransformer
+      case _ =>
+        TypeTransformer.JSTypeTransformer
+    }
 
     // Declare static fields
     for {
