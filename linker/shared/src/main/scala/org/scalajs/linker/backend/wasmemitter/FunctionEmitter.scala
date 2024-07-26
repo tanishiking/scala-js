@@ -871,38 +871,64 @@ private class FunctionEmitter private (
           assert(argsLocals.size == 1)
 
           val receiverLocal = addSyntheticLocal(watpe.RefType.any)
-          fb += wa.LocalTee(receiverLocal)
 
-          val jsValueTypeLocal = addSyntheticLocal(watpe.Int32)
-          fb += wa.Call(genFunctionID.jsValueType)
-          fb += wa.LocalTee(jsValueTypeLocal)
+          // stack requires to have `(ref any) for a receiver`
+          def genCompareToForJS() = {
+            val jsValueTypeLocal = addSyntheticLocal(watpe.Int32)
+            fb += wa.Call(genFunctionID.jsValueType)
+            fb += wa.LocalTee(jsValueTypeLocal)
 
-          fb.switch(Sig(List(watpe.Int32), Nil), Sig(Nil, List(watpe.Int32))) { () =>
-            // scrutinee is already on the stack
-          }(
-            // case JSValueTypeFalse | JSValueTypeTrue =>
-            List(JSValueTypeFalse, JSValueTypeTrue) -> { () =>
-              /* The jsValueTypeLocal is the boolean value, thanks to the chosen encoding.
-               * This trick avoids an additional unbox.
-               */
-              fb += wa.LocalGet(jsValueTypeLocal)
-              pushArgs(argsLocals)
-              genHijackedClassCall(BoxedBooleanClass)
-            },
-            // case JSValueTypeString =>
-            List(JSValueTypeString) -> { () =>
+            fb.switch(Sig(List(watpe.Int32), Nil), Sig(Nil, List(watpe.Int32))) { () =>
+              // scrutinee is already on the stack
+            }(
+              // case JSValueTypeFalse | JSValueTypeTrue =>
+              List(JSValueTypeFalse, JSValueTypeTrue) -> { () =>
+                /* The jsValueTypeLocal is the boolean value, thanks to the chosen encoding.
+                 * This trick avoids an additional unbox.
+                 */
+                fb += wa.LocalGet(jsValueTypeLocal)
+                pushArgs(argsLocals)
+                genHijackedClassCall(BoxedBooleanClass)
+              },
+              // case JSValueTypeString =>
+              List(JSValueTypeString) -> { () =>
+                fb += wa.LocalGet(receiverLocal)
+                if (typeTransformer.useWasmString) genUnbox(StringType) // convert to i16Array string
+                // no need to unbox for string
+                pushArgs(argsLocals)
+                genHijackedClassCall(BoxedStringClass)
+              }
+            ) { () =>
+              // case _ (JSValueTypeNumber) =>
               fb += wa.LocalGet(receiverLocal)
-              // no need to unbox for string
+              genUnbox(DoubleType)
               pushArgs(argsLocals)
-              genHijackedClassCall(BoxedStringClass)
+              genHijackedClassCall(BoxedDoubleClass)
             }
-          ) { () =>
-            // case _ (JSValueTypeNumber) =>
-            fb += wa.LocalGet(receiverLocal)
-            genUnbox(DoubleType)
-            pushArgs(argsLocals)
-            genHijackedClassCall(BoxedDoubleClass)
           }
+
+          if (typeTransformer.useWasmString) {
+            fb += wa.LocalSet(receiverLocal)
+            fb.block(watpe.Int32) { doneLabel =>
+              fb.block(watpe.RefType.any) { nonWasmStringLabel =>
+                fb += wa.LocalGet(receiverLocal)
+                fb += wa.BrOnCastFail(
+                  nonWasmStringLabel,
+                  watpe.RefType.any,
+                  watpe.RefType(genTypeID.i16Array)
+                )
+                // wasm string is on stack, call `compareTo` method of `j.l.String`
+                pushArgs(argsLocals)
+                genHijackedClassCall(BoxedStringClass)
+                fb += wa.Br(doneLabel)
+              } // end of nonWasmStringLabel
+              genCompareToForJS()
+            }
+          } else {
+            fb += wa.LocalTee(receiverLocal)
+            genCompareToForJS()
+          }
+
         } else {
           /* It must be a method of j.l.Object and it can be any value.
            * hashCode() and equals() are overridden in all hijacked classes.
