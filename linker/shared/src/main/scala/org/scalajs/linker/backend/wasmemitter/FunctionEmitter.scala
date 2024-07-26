@@ -421,7 +421,7 @@ private class FunctionEmitter private (
     genAdapt(generatedType, expectedType)
   }
 
-  private def genAdapt(generatedType: Type, expectedType: Type): Unit = {
+  private def genAdapt(generatedType: Type, expectedType: Type)(implicit typeTransformer: TypeTransformer): Unit = {
     (generatedType, expectedType) match {
       case _ if generatedType == expectedType =>
         ()
@@ -429,6 +429,11 @@ private class FunctionEmitter private (
         ()
       case (_, NoType) =>
         fb += wa.Drop
+      case (StringType, AnyType) if typeTransformer.useWasmString =>
+        fb += wa.Call(genFunctionID.createJSStringFromArray)
+      case (ClassType(BoxedStringClass), AnyType) if typeTransformer.useWasmString =>
+        fb += wa.Call(genFunctionID.nonNullString)
+        fb += wa.Call(genFunctionID.createJSStringFromArray)
       case (primType: PrimTypeWithRef, _) =>
         // box
         primType match {
@@ -700,8 +705,16 @@ private class FunctionEmitter private (
     val refTypeForDispatch: watpe.RefType = {
       if (receiverClassInfo.isInterface)
         watpe.RefType(genTypeID.ObjectStruct)
-      else
+      else if (typeTransformer.useWasmString) {
+        if (receiverClassName == CharSequenceClass ||
+            receiverClassName == BoxedStringClass) {
+          watpe.RefType(genTypeID.i16Array)
+        } else {
+          watpe.RefType(genTypeID.forClass(receiverClassName))
+        }
+      } else {
         watpe.RefType(genTypeID.forClass(receiverClassName))
+      }
     }
 
     // A local for a copy of the receiver that we will use to resolve dispatch
@@ -847,6 +860,7 @@ private class FunctionEmitter private (
           genHijackedClassCall(BoxedDoubleClass)
         } else if (receiverClassName == CharSequenceClass) {
           // the value must be a `string`; it already has the right type
+          if (typeTransformer.useWasmString) fb += wa.RefCast(watpe.RefType(genTypeID.i16Array))
           pushArgs(argsLocals)
           genHijackedClassCall(BoxedStringClass)
         } else if (methodName == compareToMethodName) {
@@ -1477,32 +1491,51 @@ private class FunctionEmitter private (
       val objectClassInfo = ctx.getClassInfo(ObjectClass)
 
       if (!isAncestorOfHijackedClass) {
-        /* Standard dispatch codegen, with dedicated null handling.
-         *
-         * The overall structure of the generated code is as follows:
-         *
-         * block (ref any) $done
-         *   block $isNull
-         *     load receiver as (ref null java.lang.Object)
-         *     br_on_null $isNull
-         *     generate standard table-based dispatch
-         *     br_on_non_null $done
-         *   end $isNull
-         *   gen "null"
-         * end $done
-         */
 
-        fb.block(watpe.RefType.any) { labelDone =>
-          fb.block() { labelIsNull =>
-            genTreeAuto(tree)
-            markPosition(tree)
-            fb += wa.BrOnNull(labelIsNull)
-            fb += wa.LocalTee(receiverLocalForDispatch)
-            genTableDispatch(objectClassInfo, toStringMethodName, receiverLocalForDispatch)
-            fb += wa.BrOnNonNull(labelDone)
+        if (typeTransformer.useWasmString) {
+
+          fb.block(watpe.RefType(genTypeID.i16Array)) { labelDone =>
+            fb.block() { labelIsNull =>
+              genTreeAuto(tree)
+              markPosition(tree)
+              fb += wa.BrOnNull(labelIsNull)
+              fb += wa.LocalTee(receiverLocalForDispatch)
+              genTableDispatch(objectClassInfo, toStringMethodName, receiverLocalForDispatch)
+              fb += wa.BrOnNonNull(labelDone)
+            }
+
+            fb ++= ctx.stringPool.getConstantStringInstr("null")
+            fb += wa.Call(genFunctionID.createArrayFromJSString)
           }
 
-          fb ++= ctx.stringPool.getConstantStringInstr("null")
+        } else {
+          /* Standard dispatch codegen, with dedicated null handling.
+           *
+           * The overall structure of the generated code is as follows:
+           *
+           * block (ref any) $done
+           *   block $isNull
+           *     load receiver as (ref null java.lang.Object)
+           *     br_on_null $isNull
+           *     generate standard table-based dispatch
+           *     br_on_non_null $done
+           *   end $isNull
+           *   gen "null"
+           * end $done
+           */
+
+          fb.block(watpe.RefType.any) { labelDone =>
+            fb.block() { labelIsNull =>
+              genTreeAuto(tree)
+              markPosition(tree)
+              fb += wa.BrOnNull(labelIsNull)
+              fb += wa.LocalTee(receiverLocalForDispatch)
+              genTableDispatch(objectClassInfo, toStringMethodName, receiverLocalForDispatch)
+              fb += wa.BrOnNonNull(labelDone)
+            }
+
+            fb ++= ctx.stringPool.getConstantStringInstr("null")
+          }
         }
       } else {
         if (typeTransformer.useWasmString) {
@@ -1672,7 +1705,7 @@ private class FunctionEmitter private (
     if (rhsValue == num.zero) {
       genTree(lhs, tpe)
       markPosition(tree)
-      genThrowArithmeticException()(tree.pos)
+      genThrowArithmeticException()(tree.pos, typeTransformer)
       NothingType
     } else if (isDiv && rhsValue == num.fromInt(-1)) {
       /* MinValue / -1 overflows; it traps in Wasm but we need to wrap.
@@ -1720,7 +1753,7 @@ private class FunctionEmitter private (
 
     fb += eqz
     fb.ifThen() {
-      genThrowArithmeticException()(tree.pos)
+      genThrowArithmeticException()(tree.pos, typeTransformer)
     }
     if (isDiv) {
       // Handle the MinValue / -1 corner case
@@ -1748,10 +1781,11 @@ private class FunctionEmitter private (
     tpe
   }
 
-  private def genThrowArithmeticException()(implicit pos: Position): Unit = {
+  private def genThrowArithmeticException()(implicit pos: Position, typeTransformer: TypeTransformer): Unit = {
     val ctorName = MethodName.constructor(List(ClassRef(BoxedStringClass)))
     genNewScalaClass(ArithmeticExceptionClass, ctorName) {
       fb ++= ctx.stringPool.getConstantStringInstr("/ by zero")
+      if (typeTransformer.useWasmString) fb += wa.Call(genFunctionID.createArrayFromJSString)
     }
     fb += wa.ExternConvertAny
     fb += wa.Throw(genTagID.exception)
@@ -1906,6 +1940,7 @@ private class FunctionEmitter private (
                 () // nothing to do
               case watpe.RefType(_, heapType)
                   if heapType == watpe.HeapType(genTypeID.i16Array) && typeTransformer.useWasmString =>
+                fb += wa.RefAsNonNull
                 fb += wa.Call(genFunctionID.createArrayFromJSString)
               case targetWasmType: watpe.RefType =>
                 fb += wa.RefCast(targetWasmType)
@@ -1933,6 +1968,10 @@ private class FunctionEmitter private (
 
       case StringType =>
         fb += wa.RefAsNonNull
+        if (typeTransformer.useWasmString) {
+          // fb += wa.Call(genFunctionID.jsValueToString) // for `undefined`
+          fb += wa.Call(genFunctionID.createArrayFromJSString)
+        }
 
       case CharType | LongType =>
         // Extract the `value` field (the only field) out of the box class.
@@ -2339,8 +2378,7 @@ private class FunctionEmitter private (
     AnyType
   }
 
-  private def genJSNew(tree: JSNew): Type = {
-    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
+  private def genJSNew(tree: JSNew)(implicit typeTransformer: TypeTransformer): Type = {
     val JSNew(ctor, args) = tree
 
     genTree(ctor, AnyType)
@@ -2350,8 +2388,7 @@ private class FunctionEmitter private (
     AnyType
   }
 
-  private def genJSSelect(tree: JSSelect): Type = {
-    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
+  private def genJSSelect(tree: JSSelect)(implicit typeTransformer: TypeTransformer): Type = {
     val JSSelect(qualifier, item) = tree
 
     genTree(qualifier, AnyType)
@@ -2361,8 +2398,7 @@ private class FunctionEmitter private (
     AnyType
   }
 
-  private def genJSFunctionApply(tree: JSFunctionApply): Type = {
-    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
+  private def genJSFunctionApply(tree: JSFunctionApply)(implicit typeTransformer: TypeTransformer): Type = {
     val JSFunctionApply(fun, args) = tree
 
     genTree(fun, AnyType)
@@ -2372,8 +2408,7 @@ private class FunctionEmitter private (
     AnyType
   }
 
-  private def genJSMethodApply(tree: JSMethodApply): Type = {
-    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
+  private def genJSMethodApply(tree: JSMethodApply)(implicit typeTransformer: TypeTransformer): Type = {
     val JSMethodApply(receiver, method, args) = tree
 
     genTree(receiver, AnyType)
@@ -2384,8 +2419,7 @@ private class FunctionEmitter private (
     AnyType
   }
 
-  private def genJSImportCall(tree: JSImportCall): Type = {
-    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
+  private def genJSImportCall(tree: JSImportCall)(implicit typeTransformer: TypeTransformer): Type = {
     val JSImportCall(arg) = tree
 
     genTree(arg, AnyType)
@@ -2437,8 +2471,7 @@ private class FunctionEmitter private (
     AnyType
   }
 
-  private def genJSDelete(tree: JSDelete): Type = {
-    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
+  private def genJSDelete(tree: JSDelete)(implicit typeTransformer: TypeTransformer): Type = {
     val JSDelete(qualifier, item) = tree
 
     genTree(qualifier, AnyType)
@@ -2448,8 +2481,7 @@ private class FunctionEmitter private (
     NoType
   }
 
-  private def genJSUnaryOp(tree: JSUnaryOp): Type = {
-    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
+  private def genJSUnaryOp(tree: JSUnaryOp)(implicit typeTransformer: TypeTransformer): Type = {
     val JSUnaryOp(op, lhs) = tree
 
     genTree(lhs, AnyType)
@@ -2458,8 +2490,7 @@ private class FunctionEmitter private (
     AnyType
   }
 
-  private def genJSBinaryOp(tree: JSBinaryOp): Type = {
-    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
+  private def genJSBinaryOp(tree: JSBinaryOp)(implicit typeTransformer: TypeTransformer): Type = {
     val JSBinaryOp(op, lhs, rhs) = tree
 
     op match {
@@ -2498,7 +2529,7 @@ private class FunctionEmitter private (
     tree.tpe
   }
 
-  private def genJSArrayConstr(tree: JSArrayConstr): Type = {
+  private def genJSArrayConstr(tree: JSArrayConstr)(implicit typeTransformer: TypeTransformer): Type = {
     val JSArrayConstr(items) = tree
 
     markPosition(tree)
@@ -2506,8 +2537,7 @@ private class FunctionEmitter private (
     AnyType
   }
 
-  private def genJSObjectConstr(tree: JSObjectConstr): Type = {
-    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
+  private def genJSObjectConstr(tree: JSObjectConstr)(implicit typeTransformer: TypeTransformer): Type = {
     val JSObjectConstr(fields) = tree
 
     markPosition(tree)
@@ -2538,8 +2568,8 @@ private class FunctionEmitter private (
     AnyType
   }
 
-  private def genJSArgsArray(args: List[TreeOrJSSpread]): Unit = {
-    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
+  private def genJSArgsArray(args: List[TreeOrJSSpread])(
+      implicit typeTransformer: TypeTransformer): Unit = {
     fb += wa.Call(genFunctionID.jsNewArray)
     for (arg <- args) {
       arg match {
@@ -2862,8 +2892,8 @@ private class FunctionEmitter private (
     expectedType
   }
 
-  private def genCreateJSClass(tree: CreateJSClass): Type = {
-    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
+  private def genCreateJSClass(tree: CreateJSClass)(
+      implicit typeTransformer: TypeTransformer): Type = {
     val CreateJSClass(className, captureValues) = tree
 
     val classInfo = ctx.getClassInfo(className)
@@ -2882,8 +2912,7 @@ private class FunctionEmitter private (
     AnyType
   }
 
-  private def genJSPrivateSelect(tree: JSPrivateSelect): Type = {
-    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
+  private def genJSPrivateSelect(tree: JSPrivateSelect)(implicit typeTransformer: TypeTransformer): Type = {
     val JSPrivateSelect(qualifier, FieldIdent(fieldName)) = tree
 
     genTree(qualifier, AnyType)
@@ -2896,8 +2925,7 @@ private class FunctionEmitter private (
     AnyType
   }
 
-  private def genJSSuperSelect(tree: JSSuperSelect): Type = {
-    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
+  private def genJSSuperSelect(tree: JSSuperSelect)(implicit typeTransformer: TypeTransformer): Type = {
     val JSSuperSelect(superClass, receiver, item) = tree
 
     genTree(superClass, AnyType)
@@ -2911,8 +2939,7 @@ private class FunctionEmitter private (
     AnyType
   }
 
-  private def genJSSuperMethodCall(tree: JSSuperMethodCall): Type = {
-    implicit val typeTransformer: TypeTransformer = TypeTransformer.JSTypeTransformer
+  private def genJSSuperMethodCall(tree: JSSuperMethodCall)(implicit typeTransformer: TypeTransformer): Type = {
     val JSSuperMethodCall(superClass, receiver, method, args) = tree
 
     genTree(superClass, AnyType)
