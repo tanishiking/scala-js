@@ -29,6 +29,7 @@ import org.scalajs.linker.backend.emitter.PrivateLibHolder
 import org.scalajs.linker.backend.javascript.Printers.JSTreePrinter
 import org.scalajs.linker.backend.javascript.{Trees => js}
 
+import org.scalajs.linker.backend.webassembly.BlockTypesLowering
 import org.scalajs.linker.backend.webassembly.FunctionBuilder
 import org.scalajs.linker.backend.webassembly.{Instructions => wa}
 import org.scalajs.linker.backend.webassembly.{Modules => wamod}
@@ -104,7 +105,10 @@ final class Emitter(config: Emitter.Config) {
       customJSHelpers = ctx.customJSHelpers.toList
     )
 
-    (wasmModule, jsFileContentInfo)
+    val loweredModule = BlockTypesLowering.lowerBlockTypes(wasmModule)
+    //val loweredModule = wasmModule
+
+    (loweredModule, jsFileContentInfo)
   }
 
   private def genExternalModuleImports(module: ModuleSet.Module)(
