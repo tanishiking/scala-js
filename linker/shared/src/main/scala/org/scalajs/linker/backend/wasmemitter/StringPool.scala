@@ -37,25 +37,18 @@ private[wasmemitter] final class StringPool {
     if (poolWasGenerated)
       throw new IllegalStateException("The string pool was already generated")
 
-    registeredStrings.get(str) match {
-      case Some(data) =>
-        data
+    registeredStrings.getOrElseUpdate(str, {
+      // Compute the new entry before changing the state
+      val data = StringData(nextIndex, offset = rawData.size)
 
-      case None =>
-        // Compute new entry
-        val bytes = str.toCharArray.flatMap { char =>
-          Array((char & 0xFF).toByte, (char >> 8).toByte)
-        }
-        val offset = rawData.size
-        val data = StringData(nextIndex, offset)
+      // Write the actual raw data and update the next index
+      rawData ++= str.toCharArray.flatMap { char =>
+        Array((char & 0xFF).toByte, (char >> 8).toByte)
+      }
+      nextIndex += 1
 
-        // Enter the new entry in our state
-        registeredStrings(str) = data
-        rawData ++= bytes
-        nextIndex += 1
-
-        data
-    }
+      data
+    })
   }
 
   /** Returns the list of instructions that load the given constant string.
