@@ -70,6 +70,15 @@ function superSelectSet(superClass, self, propName, value) {
   throw new TypeError("super has no setter '" + propName + "'.");
 }
 
+function installJSField(instance, name, value) {
+  Object.defineProperty(instance, name, {
+    value: value,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
+}
+
 // FIXME We need to adapt this to the correct values
 const linkingInfo = Object.freeze({
   "esVersion": 6,
@@ -230,14 +239,8 @@ const scalaJSHelpers = {
       constructor(...args) {
         var preSuperEnv = preSuperStats(data, new.target, ...args);
         super(...superArgs(data, preSuperEnv, new.target, ...args));
-        for (var i = 0; i != fields.length; i = (i + 2) | 0) {
-          Object.defineProperty(this, fields[i], {
-            value: fields[(i + 1) | 0],
-            configurable: true,
-            enumerable: true,
-            writable: true,
-          });
-        }
+        for (var i = 0; i != fields.length; i = (i + 2) | 0)
+          installJSField(this, fields[i], fields[(i + 1) | 0]);
         postSuperStats(data, preSuperEnv, new.target, this, ...args);
       }
     };
@@ -250,26 +253,13 @@ const scalaJSHelpers = {
         var restArg = args.slice(n);
         var preSuperEnv = preSuperStats(data, new.target, ...fixedArgs, restArg);
         super(...superArgs(data, preSuperEnv, new.target, ...fixedArgs, restArg));
-        for (var i = 0; i != fields.length; i = (i + 2) | 0) {
-          Object.defineProperty(this, fields[i], {
-            value: fields[(i + 1) | 0],
-            configurable: true,
-            enumerable: true,
-            writable: true,
-          });
-        }
+        for (var i = 0; i != fields.length; i = (i + 2) | 0)
+          installJSField(this, fields[i], fields[(i + 1) | 0]);
         postSuperStats(data, preSuperEnv, new.target, this, ...fixedArgs, restArg);
       }
     };
   },
-  installJSField: (instance, name, value) => {
-    Object.defineProperty(instance, name, {
-      value: value,
-      configurable: true,
-      enumerable: true,
-      writable: true,
-    });
-  },
+  installJSField: installJSField,
   installJSMethod: (data, jsClass, name, func, fixedArgCount) => {
     var closure = fixedArgCount < 0
       ? (function(...args) { return func(data, this, ...args); })
