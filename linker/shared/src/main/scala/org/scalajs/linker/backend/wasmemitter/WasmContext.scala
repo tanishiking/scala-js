@@ -197,8 +197,6 @@ object WasmContext {
       }
     }
 
-    private val methodsCalledDynamically = mutable.HashSet.empty[MethodName]
-
     /** For a class or interface, its table entries in definition order. */
     private var _tableEntries: List[MethodName] = null
 
@@ -263,12 +261,13 @@ object WasmContext {
     def isInterface: Boolean =
       kind == ClassKind.Interface
 
-    def registerDynamicCall(methodName: MethodName): Unit =
-      methodsCalledDynamically += methodName
-
-    def buildMethodTable(): Unit = {
+    def buildMethodTable(methodsCalledDynamically0: Set[MethodName]): Unit = {
       if (_tableEntries != null)
         throw new IllegalStateException(s"Duplicate call to buildMethodTable() for $name")
+
+      val methodsCalledDynamically: List[MethodName] =
+        if (hasInstances) methodsCalledDynamically0.toList
+        else Nil
 
       kind match {
         case ClassKind.Class | ClassKind.ModuleClass | ClassKind.HijackedClass =>
@@ -280,7 +279,7 @@ object WasmContext {
            * - methods that are effectively final, since they will always be
            *   statically resolved instead of using the table dispatch.
            */
-          val newTableEntries = methodsCalledDynamically.toList
+          val newTableEntries = methodsCalledDynamically
             .filter(!superTableEntrySet.contains(_))
             .filterNot(m => resolvedMethodInfos.get(m).exists(_.isEffectivelyFinal))
             .sorted // for stability
@@ -288,13 +287,11 @@ object WasmContext {
           _tableEntries = superTableEntries ::: newTableEntries
 
         case ClassKind.Interface =>
-          _tableEntries = methodsCalledDynamically.toList.sorted // for stability
+          _tableEntries = methodsCalledDynamically.sorted // for stability
 
         case _ =>
           _tableEntries = Nil
       }
-
-      methodsCalledDynamically.clear() // gc
     }
 
     def tableEntries: List[MethodName] = {

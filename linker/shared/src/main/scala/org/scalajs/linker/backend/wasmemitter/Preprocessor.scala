@@ -28,6 +28,9 @@ object Preprocessor {
   def preprocess(classes: List[LinkedClass], tles: List[LinkedTopLevelExport]): WasmContext = {
     val staticFieldMirrors = computeStaticFieldMirrors(tles)
 
+    val abstractMethodCalls =
+      AbstractMethodCallCollector.collectAbstractMethodCalls(classes, tles)
+
     val classInfosBuilder = mutable.HashMap.empty[ClassName, ClassInfo]
     val definedReflectiveProxyNames = mutable.HashSet.empty[MethodName]
 
@@ -51,14 +54,9 @@ object Preprocessor {
     // sort for stability
     val reflectiveProxyIDs = definedReflectiveProxyNames.toList.sorted.zipWithIndex.toMap
 
-    val collector = new AbstractMethodCallCollector(classInfos)
-    for (clazz <- classes)
-      collector.collectAbstractMethodCalls(clazz)
-    for (tle <- tles)
-      collector.collectAbstractMethodCalls(tle)
-
     for (clazz <- classes) {
-      classInfos(clazz.className).buildMethodTable()
+      classInfos(clazz.className).buildMethodTable(
+          abstractMethodCalls.getOrElse(clazz.className, Set.empty))
     }
 
     // Assign the itable indices for all the interfaces
@@ -202,8 +200,25 @@ object Preprocessor {
    *
    *  TODO Arguably this is a job for the `Analyzer`.
    */
-  private class AbstractMethodCallCollector(classInfos: Map[ClassName, ClassInfo])
-      extends Traversers.Traverser {
+  private object AbstractMethodCallCollector {
+    def collectAbstractMethodCalls(classes: List[LinkedClass],
+        tles: List[LinkedTopLevelExport]): Map[ClassName, Set[MethodName]] = {
+
+      val collector = new AbstractMethodCallCollector
+      for (clazz <- classes)
+        collector.collectAbstractMethodCalls(clazz)
+      for (tle <- tles)
+        collector.collectAbstractMethodCalls(tle)
+      collector.result()
+    }
+  }
+
+  private class AbstractMethodCallCollector private () extends Traversers.Traverser {
+    private val builder = new mutable.AnyRefMap[ClassName, mutable.HashSet[MethodName]]
+
+    private def registerCall(className: ClassName, methodName: MethodName): Unit =
+      builder.getOrElseUpdate(className, new mutable.HashSet) += methodName
+
     def collectAbstractMethodCalls(clazz: LinkedClass): Unit = {
       for (method <- clazz.methods)
         traverseMethodDef(method)
@@ -222,18 +237,19 @@ object Preprocessor {
       }
     }
 
+    def result(): Map[ClassName, Set[MethodName]] =
+      builder.toMap.map(kv => kv._1 -> kv._2.toSet)
+
     override def traverse(tree: Tree): Unit = {
       super.traverse(tree)
 
       tree match {
-        case Apply(flags, receiver, methodName, _) if !methodName.name.isReflectiveProxy =>
+        case Apply(flags, receiver, MethodIdent(methodName), _) if !methodName.isReflectiveProxy =>
           receiver.tpe match {
             case ClassType(className) =>
-              val classInfo = classInfos(className)
-              if (classInfo.hasInstances)
-                classInfo.registerDynamicCall(methodName.name)
+              registerCall(className, methodName)
             case AnyType =>
-              classInfos(ObjectClass).registerDynamicCall(methodName.name)
+              registerCall(ObjectClass, methodName)
             case _ =>
               // For all other cases, including arrays, we will always perform a static dispatch
               ()
