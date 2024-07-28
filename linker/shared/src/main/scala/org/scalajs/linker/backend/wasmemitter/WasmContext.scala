@@ -177,26 +177,9 @@ object WasmContext {
       val hasRuntimeTypeInfo: Boolean,
       val jsNativeLoadSpec: Option[JSNativeLoadSpec],
       val jsNativeMembers: Map[MethodName, JSNativeLoadSpec],
-      val staticFieldMirrors: Map[FieldName, List[String]]
+      val staticFieldMirrors: Map[FieldName, List[String]],
+      val resolvedMethodInfos: Map[MethodName, ConcreteMethodInfo]
   ) {
-    val resolvedMethodInfos: Map[MethodName, ConcreteMethodInfo] = {
-      if (kind.isClass || kind == ClassKind.HijackedClass) {
-        val inherited: Map[MethodName, ConcreteMethodInfo] = superClass match {
-          case Some(superClass) => superClass.resolvedMethodInfos
-          case None             => Map.empty
-        }
-
-        for (methodName <- classConcretePublicMethodNames)
-          inherited.get(methodName).foreach(_.markOverridden())
-
-        classConcretePublicMethodNames.foldLeft(inherited) { (prev, methodName) =>
-          prev.updated(methodName, new ConcreteMethodInfo(name, methodName))
-        }
-      } else {
-        Map.empty
-      }
-    }
-
     /** For a class or interface, its table entries in definition order. */
     private var _tableEntries: List[MethodName] = null
 
@@ -306,7 +289,8 @@ object WasmContext {
 
     private var effectivelyFinal: Boolean = true
 
-    private[WasmContext] def markOverridden(): Unit =
+    /** For use by `Preprocessor`. */
+    private[wasmemitter] def markOverridden(): Unit =
       effectivelyFinal = false
 
     def isEffectivelyFinal: Boolean = effectivelyFinal

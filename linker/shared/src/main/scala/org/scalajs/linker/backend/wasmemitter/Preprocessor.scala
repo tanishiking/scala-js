@@ -152,6 +152,24 @@ object Preprocessor {
      */
     val hasRuntimeTypeInfo = clazz.hasRuntimeTypeInfo || clazz.hasInstanceTests
 
+    val resolvedMethodInfos: Map[MethodName, ConcreteMethodInfo] = {
+      if (kind.isClass || kind == ClassKind.HijackedClass) {
+        val inherited: Map[MethodName, ConcreteMethodInfo] = superClass match {
+          case Some(superClass) => superClass.resolvedMethodInfos
+          case None             => Map.empty
+        }
+
+        for (methodName <- classConcretePublicMethodNames)
+          inherited.get(methodName).foreach(_.markOverridden())
+
+        classConcretePublicMethodNames.foldLeft(inherited) { (prev, methodName) =>
+          prev.updated(methodName, new ConcreteMethodInfo(className, methodName))
+        }
+      } else {
+        Map.empty
+      }
+    }
+
     val classInfo = {
       new ClassInfo(
         className,
@@ -166,7 +184,8 @@ object Preprocessor {
         hasRuntimeTypeInfo,
         clazz.jsNativeLoadSpec,
         clazz.jsNativeMembers.map(m => m.name.name -> m.jsNativeLoadSpec).toMap,
-        staticFieldMirrors
+        staticFieldMirrors,
+        resolvedMethodInfos
       )
     }
 
