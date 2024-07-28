@@ -309,12 +309,12 @@ object Preprocessor {
    *  compared to a global 1-1 mapping from interface to index. With the 1-1
    *  mapping strategy, the length of the itables would be 7 (for interfaces
    *  A-G). In contrast, using a packed encoding strategy, the length of the
-   *  interface tables is reduced to the size of the buckets, which is 4 in
-   *  this case.
+   *  interface tables is reduced to the number of buckets, which is 4 in this
+   *  case.
    *
-   *  Each element in the interface tables corresponds to the interface table
-   *  of the type in the respective bucket that the object implements. For
-   *  example, an object that implements G (and A) would have an interface
+   *  Each element in the interface tables array corresponds to the interface
+   *  table of the type in the respective bucket that the object implements.
+   *  For example, an object that implements G (and A) would have an interface
    *  table structured as: [(itable of A), (itable of G), null, null], because
    *  A is in bucket 0 and G is in bucket 1.
    *
@@ -389,10 +389,10 @@ object Preprocessor {
      * Two spine types can share the same bucket only if they do not have any
      * common join type descendants.
      *
-     * Visit spine types in reverse topological order because (from leaves to
-     * root) when assigning a spine type to a bucket, the algorithm already has
-     * complete information about the join/spine type descendants of that spine
-     * type.
+     * Visit spine types in reverse topological order (from leaves to root)
+     * because when assigning a spine type to a bucket, the algorithm already
+     * has complete information about the join/spine type descendants of that
+     * spine type.
      *
      * Assign a bucket to a spine type if adding it does not violate the bucket
      * assignment rule, namely: two spine types can share a bucket only if they
@@ -420,62 +420,68 @@ object Preprocessor {
       }
     }
 
-    /** All join type descendants of the class */
-    val joinsOf =
-      new mutable.HashMap[ClassName, mutable.HashSet[ClassName]]()
+    /* All join type descendants of the class.
+     * Invariant: sets are non-empty when present.
+     */
+    val joinsOf = new mutable.HashMap[ClassName, mutable.HashSet[ClassName]]()
 
-    /** the buckets that have been assigned to any of the ancestors of the class */
-    val usedOf = new mutable.HashMap[ClassName, mutable.HashSet[Bucket]]()
     val spines = new mutable.HashSet[ClassName]()
 
     // Phase 1: Assign buckets to spine types
-    for (clazz <- classes.reverseIterator) {
-      val ifaces = getAllInterfaces(clazz)
+    for {
+      clazz <- classes.reverseIterator
+      ifaces = getAllInterfaces(clazz)
+      if ifaces.nonEmpty
+    } {
+      val className = clazz.className
 
-      if (ifaces.nonEmpty) {
-        val joins = joinsOf.getOrElse(clazz.name.name, new mutable.HashSet())
-
-        if (joins.nonEmpty) {
+      joinsOf.get(className) match {
+        case Some(joins) =>
           // This type is a spine type
+          assert(joins.nonEmpty, s"Found empty joins set for $className")
 
           /* Look for an existing bucket to add the spine type to.
            * Two spine types can share a bucket only if they don't have any
            * common join type descendants.
            */
           val bucket = findOrCreateBucketSuchThat(!_.joins.exists(joins))
-          bucket.add(clazz.name.name)
+          bucket.add(className)
           bucket.joins ++= joins
 
           for (iface <- ifaces)
             joinsOf.getOrElseUpdate(iface, new mutable.HashSet()) ++= joins
-          spines.add(clazz.name.name)
-        } else if (ifaces.length > 1) {
+          spines.add(className)
+
+        case None if ifaces.length > 1 =>
           // This type is a join type: add to joins map, bucket assignment is done later
           for (iface <- ifaces)
-            joinsOf.getOrElseUpdate(iface, new mutable.HashSet()) += clazz.name.name
-        } else {
+            joinsOf.getOrElseUpdate(iface, new mutable.HashSet()) += className
+
+        case None =>
           // This type is a plain type. Do nothing.
-        }
       }
     }
 
+    // The buckets that have been assigned to any of the ancestors of the class
+    val usedOf = new mutable.HashMap[ClassName, mutable.HashSet[Bucket]]()
+
     // Phase 2: Assign buckets to non-spine types (plain and join types)
-    for (clazz <- classes) {
-      val ifaces = getAllInterfaces(clazz)
-
-      if (ifaces.nonEmpty && !spines.contains(clazz.name.name)) {
-        val used = usedOf.getOrElse(clazz.name.name, new mutable.HashSet())
-        for {
-          iface <- ifaces
-          parentUsed <- usedOf.get(iface)
-        } {
-          used ++= parentUsed
-        }
-
-        val bucket = findOrCreateBucketSuchThat(b => !used.contains(b))
-        bucket.add(clazz.name.name)
-        used.add(bucket)
+    for {
+      clazz <- classes
+      ifaces = getAllInterfaces(clazz)
+      if ifaces.nonEmpty && !spines.contains(clazz.name.name)
+    } {
+      val used = usedOf.getOrElse(clazz.name.name, new mutable.HashSet())
+      for {
+        iface <- ifaces
+        parentUsed <- usedOf.get(iface)
+      } {
+        used ++= parentUsed
       }
+
+      val bucket = findOrCreateBucketSuchThat(b => !used.contains(b))
+      bucket.add(clazz.name.name)
+      used.add(bucket)
     }
 
     // Build result data structure
