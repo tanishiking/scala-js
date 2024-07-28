@@ -398,9 +398,6 @@ private class TextWriter(module: Module) {
     }
   }
 
-  private def writeLabelIdx(labelIdx: LabelID): Unit =
-    appendName(labelIdx)
-
   private def writeExpr(expr: Expr): Unit = {
     val Expr(instrs) = expr
 
@@ -447,7 +444,7 @@ private class TextWriter(module: Module) {
       case instr: BlockTypeLabeledInstr =>
         writeBlockType(instr.blockTypeArgument)
       case instr: LabelInstr =>
-        writeLabelIdx(instr.labelArgument)
+        appendName(instr.labelArgument)
       case instr: FuncInstr =>
         appendName(instr.funcArgument)
       case instr: TypeInstr =>
@@ -474,15 +471,15 @@ private class TextWriter(module: Module) {
       case F64Const(v) => writeFloatString(v)
 
       case BrTable(labelIdxVector, defaultLabelIdx) =>
-        labelIdxVector.foreach(writeLabelIdx(_))
-        writeLabelIdx(defaultLabelIdx)
+        labelIdxVector.foreach(appendName(_))
+        appendName(defaultLabelIdx)
 
       case TryTable(blockType, clauses, _) =>
         writeBlockType(blockType)
         for (clause <- clauses) {
           b.sameLineList(clause.mnemonic) {
             clause.tag.foreach(tag => appendName(tag))
-            writeLabelIdx(clause.label)
+            appendName(clause.label)
           }
         }
 
@@ -499,11 +496,11 @@ private class TextWriter(module: Module) {
         appendName(srcType)
 
       case BrOnCast(labelIdx, from, to) =>
-        writeLabelIdx(labelIdx)
+        appendName(labelIdx)
         writeType(from)
         writeType(to)
       case BrOnCastFail(labelIdx, from, to) =>
-        writeLabelIdx(labelIdx)
+        appendName(labelIdx)
         writeType(from)
         writeType(to)
 
