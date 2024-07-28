@@ -420,12 +420,16 @@ object Printers {
         case UnaryOp(op, lhs) =>
           import ir.Trees.JSUnaryOp._
           print('(')
-          (op: @switch) match {
-            case +        => print('+')
-            case -        => print('-')
-            case ~        => print('~')
-            case !        => print('!')
-            case `typeof` => print("typeof ")
+          if (op == `typeof`) {
+            print("typeof ")
+          } else {
+            (op: @switch) match {
+              case + => print('+')
+              case - => print('-')
+              case ~ => print('~')
+              case ! => print('!')
+              case `typeof` => print("typeof ")
+            }
           }
           print(lhs)
           print(')')
