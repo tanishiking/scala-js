@@ -178,19 +178,11 @@ object WasmContext {
       val jsNativeLoadSpec: Option[JSNativeLoadSpec],
       val jsNativeMembers: Map[MethodName, JSNativeLoadSpec],
       val staticFieldMirrors: Map[FieldName, List[String]],
-      val resolvedMethodInfos: Map[MethodName, ConcreteMethodInfo]
+      val resolvedMethodInfos: Map[MethodName, ConcreteMethodInfo],
+      _itableIdx: Int
   ) {
     /** For a class or interface, its table entries in definition order. */
     private var _tableEntries: List[MethodName] = null
-
-    private var _itableIdx: Int = -1
-
-    /** Sets the itable index of this interface.
-     *
-     *  !!! Only use as part of building the context in `Preprocessor`.
-     */
-    def setItableIdx(idx: Int): Unit =
-      _itableIdx = idx
 
     /** Returns the index of this interface's itable in the classes' interface tables. */
     def itableIdx: Int = {

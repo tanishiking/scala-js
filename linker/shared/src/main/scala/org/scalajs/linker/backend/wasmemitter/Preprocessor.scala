@@ -31,6 +31,9 @@ object Preprocessor {
     val abstractMethodCalls =
       AbstractMethodCallCollector.collectAbstractMethodCalls(classes, tles)
 
+    val (itableBucketCount, itableBucketAssignments) =
+      computeItableBuckets(classes)
+
     val classInfosBuilder = mutable.HashMap.empty[ClassName, ClassInfo]
     val definedReflectiveProxyNames = mutable.HashSet.empty[MethodName]
 
@@ -38,6 +41,7 @@ object Preprocessor {
       val classInfo = preprocess(
         clazz,
         staticFieldMirrors.getOrElse(clazz.className, Map.empty),
+        itableBucketAssignments.getOrElse(clazz.className, -1),
         classInfosBuilder
       )
       classInfosBuilder += clazz.className -> classInfo
@@ -59,13 +63,7 @@ object Preprocessor {
           abstractMethodCalls.getOrElse(clazz.className, Set.empty))
     }
 
-    // Assign the itable indices for all the interfaces
-    val itableBuckets = computeItableBuckets(classes,
-        isInterface = cls => classInfos(cls).isInterface)
-    for ((bucket, itableIdx) <- itableBuckets.zipWithIndex)
-      bucket.foreach(intf => classInfos(intf).setItableIdx(itableIdx))
-
-    new WasmContext(classInfos, reflectiveProxyIDs, itableBuckets.size)
+    new WasmContext(classInfos, reflectiveProxyIDs, itableBucketCount)
   }
 
   private def computeStaticFieldMirrors(
@@ -90,6 +88,7 @@ object Preprocessor {
   private def preprocess(
       clazz: LinkedClass,
       staticFieldMirrors: Map[FieldName, List[String]],
+      itableIdx: Int,
       previousClassInfos: collection.Map[ClassName, ClassInfo]
   ): ClassInfo = {
     val className = clazz.className
@@ -185,7 +184,8 @@ object Preprocessor {
         clazz.jsNativeLoadSpec,
         clazz.jsNativeMembers.map(m => m.name.name -> m.jsNativeLoadSpec).toMap,
         staticFieldMirrors,
-        resolvedMethodInfos
+        resolvedMethodInfos,
+        itableIdx
       )
     }
 
@@ -356,18 +356,21 @@ object Preprocessor {
    *       to a new bucket.
    *
    *  @return
-   *    A sequence of all the buckets, where each bucket is a list of the
-   *    interfaces that were assigned to (the index of) that bucket.
+   *    The total number of buckets and a map from interface name to
+   *    (the index of) the bucket it was assigned to.
    *
    *  @see
    *    The algorithm is based on the "packed encoding" presented in the paper
    *    "Efficient Type Inclusion Tests"
    *    [[https://www.researchgate.net/publication/2438441_Efficient_Type_Inclusion_Tests]]
    */
-  private def computeItableBuckets(allClasses: List[LinkedClass],
-      isInterface: ClassName => Boolean): Seq[List[ClassName]] = {
+  private def computeItableBuckets(
+      allClasses: List[LinkedClass]): (Int, Map[ClassName, Int]) = {
 
     val classes = allClasses.filterNot(_.kind.isJSType)
+
+    val isInterface: Set[ClassName] =
+      classes.withFilter(_.kind == ClassKind.Interface).map(_.className).toSet
 
     /* The algorithm separates the type hierarchy into three disjoint subsets:
      *
@@ -475,7 +478,13 @@ object Preprocessor {
       }
     }
 
-    buckets.toList.map(_.interfaces)
+    // Build result data structure
+    val totalBucketCount = buckets.size
+    val interfaceNameToBucketBuilder = Map.newBuilder[ClassName, Int]
+    for ((bucket, index) <- buckets.toList.zipWithIndex)
+      bucket.interfaces.foreach(className => interfaceNameToBucketBuilder += className -> index)
+
+    (totalBucketCount, interfaceNameToBucketBuilder.result())
   }
 
   private final class Bucket {
