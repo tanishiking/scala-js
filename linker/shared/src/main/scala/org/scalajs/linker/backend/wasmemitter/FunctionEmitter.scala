@@ -596,9 +596,6 @@ private class FunctionEmitter private (
         fb += wa.Unreachable // trap
         NothingType
 
-      case _ if method.name.isReflectiveProxy =>
-        genReflectiveCall(tree)
-
       case _ =>
         val receiverClassName = receiver.tpe match {
           case prim: PrimType  => PrimTypeToBoxedClass(prim)
@@ -628,7 +625,10 @@ private class FunctionEmitter private (
           receiver.tpe.isInstanceOf[ArrayType] ||
           receiverClassInfo.resolvedMethodInfos.get(method.name).exists(_.isEffectivelyFinal)
         }
-        if (canUseStaticallyResolved) {
+
+        if (method.name.isReflectiveProxy) {
+          genReflectiveCall(tree, receiverClassInfo.kind)
+        } else if (canUseStaticallyResolved) {
           genApplyStatically(ApplyStatically(
               flags, receiver, receiverClassName, method, args)(tree.tpe)(tree.pos))
         } else {
@@ -637,7 +637,7 @@ private class FunctionEmitter private (
     }
   }
 
-  private def genReflectiveCall(tree: Apply)(implicit typeTransformer: TypeTransformer): Type = {
+  private def genReflectiveCall(tree: Apply, receiverClassKind: ClassKind)(implicit typeTransformer: TypeTransformer): Type = {
     val Apply(flags, receiver, MethodIdent(methodName), args) = tree
 
     assert(methodName.isReflectiveProxy)
@@ -657,7 +657,7 @@ private class FunctionEmitter private (
     genTree(receiver, AnyType)
     fb += wa.RefAsNonNull
     fb += wa.LocalTee(receiverLocalForDispatch)
-    genArgs(args, methodName)
+    genArgs(args, methodName, receiverClassKind)
 
     // Looks up the method to be (reflectively) called
     markPosition(tree)
@@ -670,6 +670,7 @@ private class FunctionEmitter private (
 
     fb += wa.RefCast(watpe.RefType(watpe.HeapType(funcTypeID)))
     fb += wa.CallRef(funcTypeID)
+    genAdaptResultString(tree.tpe, typeTransformer.useWasmString, !receiverClassKind.isJSType)
 
     tree.tpe
   }
@@ -726,6 +727,7 @@ private class FunctionEmitter private (
     def genReceiverNotNull(): Unit = {
       genTreeAuto(receiver)
       fb += wa.RefAsNonNull
+      genAdaptArgString(receiver.tpe, typeTransformer.useWasmString, !receiverClassInfo.kind.isJSType)
     }
 
     /* Generates a resolved call to a method of a hijacked class.
@@ -752,10 +754,13 @@ private class FunctionEmitter private (
       // Standard dispatch codegen
       genReceiverNotNull()
       fb += wa.LocalTee(receiverLocalForDispatch)
-      genArgs(args, methodName)
+      val receiverClassKind = receiverClassInfo.kind
+      genArgs(args, methodName, receiverClassKind)
 
       markPosition(tree)
       genTableDispatch(receiverClassInfo, methodName, receiverLocalForDispatch)
+
+      genAdaptResultString(tree.tpe, typeTransformer.useWasmString, !receiverClassKind.isJSType)
     } else {
       /* Here the receiver's type is an ancestor of a hijacked class (or `any`,
        * which is treated as `jl.Object`).
@@ -1021,13 +1026,14 @@ private class FunctionEmitter private (
 
       case _ =>
         val namespace = MemberNamespace.forNonStaticCall(flags)
+        val classInfo = ctx.getClassInfo(className)
         val targetClassName = {
-          val classInfo = ctx.getClassInfo(className)
           if (!classInfo.isInterface && namespace == MemberNamespace.Public)
             classInfo.resolvedMethodInfos(methodName).ownerClass
           else
             className
         }
+
 
         BoxedClassToPrimType.get(targetClassName) match {
           case None =>
@@ -1043,26 +1049,65 @@ private class FunctionEmitter private (
               genUnbox(primReceiverType)
             }
         }
+        genAdaptArgString(receiver.tpe, typeTransformer.useWasmString, !classInfo.kind.isJSType)
 
-        genArgs(args, methodName)
+        genArgs(args, methodName, classInfo.kind)
 
         markPosition(tree)
         val funcID = genFunctionID.forMethod(namespace, targetClassName, methodName)
         fb += wa.Call(funcID)
+        genAdaptResultString(tree.tpe, typeTransformer.useWasmString, !classInfo.kind.isJSType)
         if (tree.tpe == NothingType)
           fb += wa.Unreachable
         tree.tpe
     }
   }
 
+  private def genAdaptArgString(
+    paramType: Type,
+    callerUsesWasmStr: Boolean,
+    calleeUsesWasmStr: Boolean
+  ): Unit = {
+    if (paramType == StringType || paramType == ClassType(BoxedStringClass)) {
+      val nullable = paramType == ClassType(BoxedStringClass)
+      if (callerUsesWasmStr && !calleeUsesWasmStr) {
+        if (nullable) fb += wa.Call(genFunctionID.nonNullString)
+        fb += wa.Call(genFunctionID.createJSStringFromArray)
+      } else if (!callerUsesWasmStr && calleeUsesWasmStr) {
+        if (nullable) fb += wa.Call(genFunctionID.jsValueToStringForConcat)
+        fb += wa.Call(genFunctionID.createArrayFromJSString)
+      }
+    }
+  }
+
+  private def genAdaptResultString(
+    resultType: Type,
+    callerUsesWasmStr: Boolean,
+    calleeUsesWasmStr: Boolean
+  ): Unit = {
+    if (resultType == StringType || resultType == ClassType(BoxedStringClass)) {
+      val nullable = resultType == ClassType(BoxedStringClass)
+      if (callerUsesWasmStr && !calleeUsesWasmStr) {
+        if (nullable) fb += wa.Call(genFunctionID.jsValueToStringForConcat)
+        fb += wa.Call(genFunctionID.createArrayFromJSString)
+      } else if (!callerUsesWasmStr && calleeUsesWasmStr) {
+        if (nullable) fb += wa.Call(genFunctionID.nonNullString)
+        fb += wa.Call(genFunctionID.createJSStringFromArray)
+      }
+    }
+  }
+
   private def genApplyStatic(tree: ApplyStatic)(implicit typeTransformer: TypeTransformer): Type = {
     val ApplyStatic(flags, className, MethodIdent(methodName), args) = tree
 
-    genArgs(args, methodName)
+    val receiverClassKind = ctx.getClassInfo(className).kind
+    genArgs(args, methodName, receiverClassKind)
     val namespace = MemberNamespace.forStaticCall(flags)
     val funcID = genFunctionID.forMethod(namespace, className, methodName)
     markPosition(tree)
     fb += wa.Call(funcID)
+    genAdaptResultString(tree.tpe, typeTransformer.useWasmString, !receiverClassKind.isJSType)
+
     if (tree.tpe == NothingType)
       fb += wa.Unreachable
     tree.tpe
@@ -1074,10 +1119,16 @@ private class FunctionEmitter private (
         s"Unexpected $tree at ${tree.pos}; multiple modules are not supported yet")
   }
 
-  private def genArgs(args: List[Tree], methodName: MethodName)(implicit typeTransformer: TypeTransformer): Unit = {
+  private def genArgs(args: List[Tree], methodName: MethodName, receiverClassKind: ClassKind)(
+      implicit typeTransformer: TypeTransformer): Unit = {
     for ((arg, paramTypeRef) <- args.zip(methodName.paramTypeRefs)) {
       val paramType = ctx.inferTypeFromTypeRef(paramTypeRef)
       genTree(arg, paramType)
+      genAdaptArgString(
+        paramType,
+        callerUsesWasmStr = typeTransformer.useWasmString,
+        calleeUsesWasmStr = !receiverClassKind.isJSType
+      )
     }
   }
 
@@ -2287,7 +2338,7 @@ private class FunctionEmitter private (
     val New(className, MethodIdent(ctorName), args) = tree
 
     genNewScalaClass(className, ctorName) {
-      genArgs(args, ctorName)
+      genArgs(args, ctorName, ctx.getClassInfo(className).kind)
     } (tree.pos)
 
     tree.tpe
