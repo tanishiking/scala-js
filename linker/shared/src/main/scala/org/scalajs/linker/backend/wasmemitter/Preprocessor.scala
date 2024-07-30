@@ -367,10 +367,11 @@ object Preprocessor {
   private def computeItableBuckets(
       allClasses: List[LinkedClass]): (Int, Map[ClassName, Int]) = {
 
+    /* Since we only have to assign itable indices to interfaces with
+     * instances, we can filter out all parts of the hierarchy that are not
+     * Scala types with instances.
+     */
     val classes = allClasses.filter(c => !c.kind.isJSType && c.hasInstances)
-
-    val isInterface: Set[ClassName] =
-      classes.withFilter(_.kind == ClassKind.Interface).map(_.className).toSet
 
     /* The algorithm separates the type hierarchy into three disjoint subsets:
      *
@@ -381,6 +382,16 @@ object Preprocessor {
      * - spine types: all ancestors of join types:
      *   `spine(T) = {x ∈ T | ∃ y ∈ join(T) : x ∈ ancestors(y)}`
      * - plain types: types that are neither join nor spine types
+     *
+     * Now observe that:
+     *
+     * - we only work with types that have instances,
+     * - the only way an *interface* `I` can have instances is if there is a
+     *   *class* with instances that implements it,
+     * - there must exist such a class `C` that is a join type: one that
+     *   extends another *class* and also at least one interface that has `I`
+     *   in its ancestors (note that `jl.Object` implements no interface),
+     * - therefore, `I` must be a spine type!
      *
      * The bucket assignment process consists of two parts:
      *
@@ -401,14 +412,10 @@ object Preprocessor {
      *
      * **2. Assign buckets to non-spine types (plain and join types)**
      *
-     * Visit these types in level order (from root to leaves). For each type,
-     * compute the set of buckets already used by its ancestors. Assign the
-     * type to any available bucket not in this set. If no available bucket
-     * exists, create a new one.
+     * Since we only need to assign itable indices to interfaces, and we
+     * observed that interfaces are all spine types, we can entirely skip this
+     * phase of the paper's algorithm.
      */
-
-    def getAllInterfaces(clazz: LinkedClass): List[ClassName] =
-      clazz.ancestors.filter(isInterface)
 
     val buckets = new mutable.ListBuffer[Bucket]()
 
@@ -425,15 +432,10 @@ object Preprocessor {
      */
     val joinsOf = new mutable.HashMap[ClassName, mutable.HashSet[ClassName]]()
 
-    val spines = new mutable.HashSet[ClassName]()
-
     // Phase 1: Assign buckets to spine types
-    for {
-      clazz <- classes.reverseIterator
-      ifaces = getAllInterfaces(clazz)
-      if ifaces.nonEmpty
-    } {
+    for (clazz <- classes.reverseIterator) {
       val className = clazz.className
+      val parents = (clazz.superClass.toList ::: clazz.interfaces.toList).map(_.name)
 
       joinsOf.get(className) match {
         case Some(joins) =>
@@ -448,41 +450,20 @@ object Preprocessor {
           bucket.add(className)
           bucket.joins ++= joins
 
-          for (iface <- ifaces)
-            joinsOf.getOrElseUpdate(iface, new mutable.HashSet()) ++= joins
-          spines.add(className)
+          for (parent <- parents)
+            joinsOf.getOrElseUpdate(parent, new mutable.HashSet()) ++= joins
 
-        case None if ifaces.length > 1 =>
-          // This type is a join type: add to joins map, bucket assignment is done later
-          for (iface <- ifaces)
-            joinsOf.getOrElseUpdate(iface, new mutable.HashSet()) += className
+        case None if parents.length > 1 =>
+          // This type is a join type: add to joins map
+          for (parent <- parents)
+            joinsOf.getOrElseUpdate(parent, new mutable.HashSet()) += className
 
         case None =>
           // This type is a plain type. Do nothing.
       }
     }
 
-    // The buckets that have been assigned to any of the ancestors of the class
-    val usedOf = new mutable.HashMap[ClassName, mutable.HashSet[Bucket]]()
-
-    // Phase 2: Assign buckets to non-spine types (plain and join types)
-    for {
-      clazz <- classes
-      ifaces = getAllInterfaces(clazz)
-      if ifaces.nonEmpty && !spines.contains(clazz.name.name)
-    } {
-      val used = usedOf.getOrElse(clazz.name.name, new mutable.HashSet())
-      for {
-        iface <- ifaces
-        parentUsed <- usedOf.get(iface)
-      } {
-        used ++= parentUsed
-      }
-
-      val bucket = findOrCreateBucketSuchThat(b => !used.contains(b))
-      bucket.add(clazz.name.name)
-      used.add(bucket)
-    }
+    // No Phase 2 :-)
 
     // Build result data structure
     val totalBucketCount = buckets.size
