@@ -367,7 +367,7 @@ object Preprocessor {
   private def computeItableBuckets(
       allClasses: List[LinkedClass]): (Int, Map[ClassName, Int]) = {
 
-    val classes = allClasses.filterNot(_.kind.isJSType)
+    val classes = allClasses.filter(c => !c.kind.isJSType && c.hasInstances)
 
     val isInterface: Set[ClassName] =
       classes.withFilter(_.kind == ClassKind.Interface).map(_.className).toSet

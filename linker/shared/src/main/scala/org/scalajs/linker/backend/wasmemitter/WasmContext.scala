@@ -181,13 +181,29 @@ object WasmContext {
       val resolvedMethodInfos: Map[MethodName, ConcreteMethodInfo],
       _itableIdx: Int
   ) {
+    override def toString(): String =
+      s"ClassInfo(${name.nameString})"
+
     /** For a class or interface, its table entries in definition order. */
     private var _tableEntries: List[MethodName] = null
 
-    /** Returns the index of this interface's itable in the classes' interface tables. */
+    /** Returns the index of this interface's itable in the classes' interface tables.
+     *
+     *  Only interfaces that have instances get an itable index.
+     */
     def itableIdx: Int = {
-      if (_itableIdx < 0)
-        throw new IllegalArgumentException(s"$this was not assigned an itable index.")
+      if (_itableIdx < 0) {
+        val isInterface = kind == ClassKind.Interface
+        if (isInterface && hasInstances) {
+          // it should have received an itable idx
+          throw new IllegalStateException(
+              s"$this was not assigned an itable index although it needs one.")
+        } else {
+          throw new IllegalArgumentException(
+              s"Trying to ask the itable idx for $this, which is not supposed to have one " +
+              s"(isInterface = $isInterface; hasInstances = $hasInstances).")
+        }
+      }
       _itableIdx
     }
 

@@ -441,75 +441,82 @@ class ClassEmitter(coreSpec: CoreSpec) {
     val exprParam = fb.addParam("expr", watpe.RefType.anyref)
     fb.setResultType(watpe.Int32)
 
-    val itables = fb.addLocal("itables", watpe.RefType.nullable(genTypeID.itables))
-
-    fb.block(watpe.RefType.anyref) { testFail =>
-      // if expr is not an instance of Object, return false
-      fb += wa.LocalGet(exprParam)
-      fb += wa.BrOnCastFail(
-        testFail,
-        watpe.RefType.anyref,
-        watpe.RefType(genTypeID.ObjectStruct)
-      )
-
-      // get itables and store
-      fb += wa.StructGet(genTypeID.ObjectStruct, genFieldID.objStruct.itables)
-      fb += wa.LocalSet(itables)
-
-      // Dummy return value from the block
-      fb += wa.RefNull(watpe.HeapType.Any)
-
-      // if the itables is null (no interfaces are implemented)
-      fb += wa.LocalGet(itables)
-      fb += wa.BrOnNull(testFail)
-
-      fb += wa.LocalGet(itables)
-      fb += wa.I32Const(classInfo.itableIdx)
-      fb += wa.ArrayGet(genTypeID.itables)
-      fb += wa.RefTest(watpe.RefType(genTypeID.forITable(className)))
-      fb += wa.Return
-    } // test fail
-
-    if (classInfo.isAncestorOfHijackedClass) {
-      /* It could be a hijacked class instance that implements this interface.
-       * Test whether `jsValueType(expr)` is in the `specialInstanceTypes` bitset.
-       * In other words, return `((1 << jsValueType(expr)) & specialInstanceTypes) != 0`.
-       *
-       * For example, if this class is `Comparable`,
-       * `specialInstanceTypes == 0b00001111`, since `jl.Boolean`, `jl.String`
-       * and `jl.Double` implement `Comparable`, but `jl.Void` does not.
-       * If `expr` is a `number`, `jsValueType(expr) == 3`. We then test whether
-       * `(1 << 3) & 0b00001111 != 0`, which is true because `(1 << 3) == 0b00001000`.
-       * If `expr` is `undefined`, it would be `(1 << 4) == 0b00010000`, which
-       * would give `false`.
+    if (!clazz.hasInstances) {
+      /* Interfaces that do not have instances do not receive an itable index,
+       * so the codegen below would not work. Return a constant false instead.
        */
-      val anyRefToVoidSig = watpe.FunctionType(List(watpe.RefType.anyref), Nil)
-
-      val exprNonNullLocal = fb.addLocal("exprNonNull", watpe.RefType.any)
-
-      fb.block(anyRefToVoidSig) { isNullLabel =>
-        // exprNonNull := expr; branch to isNullLabel if it is null
-        fb += wa.BrOnNull(isNullLabel)
-        fb += wa.LocalSet(exprNonNullLocal)
-
-        // Load 1 << jsValueType(expr)
-        fb += wa.I32Const(1)
-        fb += wa.LocalGet(exprNonNullLocal)
-        fb += wa.Call(genFunctionID.jsValueType)
-        fb += wa.I32Shl
-
-        // return (... & specialInstanceTypes) != 0
-        fb += wa.I32Const(classInfo.specialInstanceTypes)
-        fb += wa.I32And
-        fb += wa.I32Const(0)
-        fb += wa.I32Ne
-        fb += wa.Return
-      }
-
       fb += wa.I32Const(0) // false
     } else {
-      fb += wa.Drop
-      fb += wa.I32Const(0) // false
+      val itables = fb.addLocal("itables", watpe.RefType.nullable(genTypeID.itables))
+
+      fb.block(watpe.RefType.anyref) { testFail =>
+        // if expr is not an instance of Object, return false
+        fb += wa.LocalGet(exprParam)
+        fb += wa.BrOnCastFail(
+          testFail,
+          watpe.RefType.anyref,
+          watpe.RefType(genTypeID.ObjectStruct)
+        )
+
+        // get itables and store
+        fb += wa.StructGet(genTypeID.ObjectStruct, genFieldID.objStruct.itables)
+        fb += wa.LocalSet(itables)
+
+        // Dummy return value from the block
+        fb += wa.RefNull(watpe.HeapType.Any)
+
+        // if the itables is null (no interfaces are implemented)
+        fb += wa.LocalGet(itables)
+        fb += wa.BrOnNull(testFail)
+
+        fb += wa.LocalGet(itables)
+        fb += wa.I32Const(classInfo.itableIdx)
+        fb += wa.ArrayGet(genTypeID.itables)
+        fb += wa.RefTest(watpe.RefType(genTypeID.forITable(className)))
+        fb += wa.Return
+      } // test fail
+
+      if (classInfo.isAncestorOfHijackedClass) {
+        /* It could be a hijacked class instance that implements this interface.
+         * Test whether `jsValueType(expr)` is in the `specialInstanceTypes` bitset.
+         * In other words, return `((1 << jsValueType(expr)) & specialInstanceTypes) != 0`.
+         *
+         * For example, if this class is `Comparable`,
+         * `specialInstanceTypes == 0b00001111`, since `jl.Boolean`, `jl.String`
+         * and `jl.Double` implement `Comparable`, but `jl.Void` does not.
+         * If `expr` is a `number`, `jsValueType(expr) == 3`. We then test whether
+         * `(1 << 3) & 0b00001111 != 0`, which is true because `(1 << 3) == 0b00001000`.
+         * If `expr` is `undefined`, it would be `(1 << 4) == 0b00010000`, which
+         * would give `false`.
+         */
+        val anyRefToVoidSig = watpe.FunctionType(List(watpe.RefType.anyref), Nil)
+
+        val exprNonNullLocal = fb.addLocal("exprNonNull", watpe.RefType.any)
+
+        fb.block(anyRefToVoidSig) { isNullLabel =>
+          // exprNonNull := expr; branch to isNullLabel if it is null
+          fb += wa.BrOnNull(isNullLabel)
+          fb += wa.LocalSet(exprNonNullLocal)
+
+          // Load 1 << jsValueType(expr)
+          fb += wa.I32Const(1)
+          fb += wa.LocalGet(exprNonNullLocal)
+          fb += wa.Call(genFunctionID.jsValueType)
+          fb += wa.I32Shl
+
+          // return (... & specialInstanceTypes) != 0
+          fb += wa.I32Const(classInfo.specialInstanceTypes)
+          fb += wa.I32And
+          fb += wa.I32Const(0)
+          fb += wa.I32Ne
+          fb += wa.Return
+        }
+
+        fb += wa.I32Const(0) // false
+      } else {
+        fb += wa.Drop
+        fb += wa.I32Const(0) // false
+      }
     }
 
     fb.buildAndAddToModule()
