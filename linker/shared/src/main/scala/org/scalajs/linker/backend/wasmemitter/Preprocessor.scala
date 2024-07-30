@@ -418,10 +418,11 @@ object Preprocessor {
      */
 
     val buckets = new mutable.ListBuffer[Bucket]()
+    val resultBuilder = Map.newBuilder[ClassName, Int]
 
     def findOrCreateBucketSuchThat(p: Bucket => Boolean): Bucket = {
       buckets.find(p).getOrElse {
-        val newBucket = new Bucket()
+        val newBucket = new Bucket(index = buckets.size)
         buckets += newBucket
         newBucket
       }
@@ -448,7 +449,7 @@ object Preprocessor {
            */
           if (clazz.kind == ClassKind.Interface) {
             val bucket = findOrCreateBucketSuchThat(!_.joins.exists(joins))
-            bucket.add(className)
+            resultBuilder += className -> bucket.index
             bucket.joins ++= joins
           }
 
@@ -467,23 +468,11 @@ object Preprocessor {
 
     // No Phase 2 :-)
 
-    // Build result data structure
-    val totalBucketCount = buckets.size
-    val interfaceNameToBucketBuilder = Map.newBuilder[ClassName, Int]
-    for ((bucket, index) <- buckets.toList.zipWithIndex)
-      bucket.interfaces.foreach(className => interfaceNameToBucketBuilder += className -> index)
-
-    (totalBucketCount, interfaceNameToBucketBuilder.result())
+    // Build the result
+    (buckets.size, resultBuilder.result())
   }
 
-  private final class Bucket {
-    /** The list of interfaces that belong to this bucket. */
-    var interfaces: List[ClassName] = Nil
-
-    /** Add an interface to this bucket. */
-    def add(clazz: ClassName): Unit =
-      interfaces ::= clazz
-
+  private final class Bucket(val index: Int) {
     /** A set of join types that are descendants of the types assigned to that bucket */
     val joins = new mutable.HashSet[ClassName]()
   }
