@@ -442,13 +442,15 @@ object Preprocessor {
           // This type is a spine type
           assert(joins.nonEmpty, s"Found empty joins set for $className")
 
-          /* Look for an existing bucket to add the spine type to.
-           * Two spine types can share a bucket only if they don't have any
-           * common join type descendants.
+          /* If the spine type is an interface, look for an existing bucket to
+           * add it to. Two spine types can share a bucket only if they don't
+           * have any common join type descendants.
            */
-          val bucket = findOrCreateBucketSuchThat(!_.joins.exists(joins))
-          bucket.add(className)
-          bucket.joins ++= joins
+          if (clazz.kind == ClassKind.Interface) {
+            val bucket = findOrCreateBucketSuchThat(!_.joins.exists(joins))
+            bucket.add(className)
+            bucket.joins ++= joins
+          }
 
           for (parent <- parents)
             joinsOf.getOrElseUpdate(parent, new mutable.HashSet()) ++= joins
