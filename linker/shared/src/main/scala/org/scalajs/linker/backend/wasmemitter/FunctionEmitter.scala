@@ -1202,6 +1202,7 @@ private class FunctionEmitter private (
         genTypeID.forClass(className),
         genFieldID.forClassInstanceField(fieldName)
       )
+      genAdaptResultString(tree.tpe, typeTransformer.useWasmString, !classInfo.kind.isJSType)
     }
 
     tree.tpe
