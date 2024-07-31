@@ -614,8 +614,11 @@ object CoreWasmLib {
     genJSStringBuiltins()
     genWasmStringConcat()
     genCreateJSStringFromArray()
+    genCreateJSStringFromArrayNullable()
     genCreateArrayFromJSString()
+    genCreateArrayFromJSStringNullable()
     genNonNullString()
+    genStringEquals()
     genArrayEquals()
   }
 
@@ -2283,10 +2286,27 @@ object CoreWasmLib {
     fb.buildAndAddToModule()
   }
 
+  // (ref null any) -> (ref null (array (mut i16)))
+  private def genCreateArrayFromJSStringNullable()(implicit ctx: WasmContext): Unit = {
+    val fb = newFunctionBuilder(genFunctionID.createArrayFromJSStringNullable)
+    val strParam = fb.addParam("str", RefType.anyref)
+    fb.setResultType(RefType.nullable(genTypeID.i16Array))
+
+    fb.block(RefType.any) { nonNullLabel =>
+      fb += LocalGet(strParam)
+      fb += BrOnNonNull(nonNullLabel)
+      fb += RefNull(HeapType(genTypeID.i16Array))
+      fb += Return
+    }
+    fb += Call(genFunctionID.createArrayFromJSString)
+
+    fb.buildAndAddToModule()
+  }
+
   // (ref any) -> (ref (array (mut i16)))
   private def genCreateArrayFromJSString()(implicit ctx: WasmContext): Unit = {
     val fb = newFunctionBuilder(genFunctionID.createArrayFromJSString)
-    val strParam = fb.addParam("str", RefType.any)
+    val strParam = fb.addParam("strParam", RefType.any)
     val result = fb.addLocal("result", RefType(genTypeID.i16Array))
     fb.setResultType(RefType(genTypeID.i16Array))
 
@@ -2306,6 +2326,23 @@ object CoreWasmLib {
     fb += Drop
 
     fb += LocalGet(result)
+
+    fb.buildAndAddToModule()
+  }
+
+  // (ref null (array (mut i16))) -> (ref null any)
+  private def genCreateJSStringFromArrayNullable()(implicit ctx: WasmContext): Unit = {
+    val fb = newFunctionBuilder(genFunctionID.createJSStringFromArrayNullable)
+    val arrayParam = fb.addParam("array", RefType.nullable(genTypeID.i16Array))
+    fb.setResultType(RefType.anyref)
+
+    fb.block(RefType(genTypeID.i16Array)) { nonNullLabel =>
+      fb += LocalGet(arrayParam)
+      fb += BrOnNonNull(nonNullLabel)
+      fb += RefNull(HeapType.Any)
+      fb += Return
+    }
+    fb += Call(genFunctionID.createJSStringFromArray)
 
     fb.buildAndAddToModule()
   }
@@ -2343,6 +2380,58 @@ object CoreWasmLib {
       fb ++= ctx.stringPool.getConstantStringInstr("null")
       fb += Call(genFunctionID.createArrayFromJSString)
     }
+
+    fb.buildAndAddToModule()
+  }
+
+  private def genStringEquals()(implicit ctx: WasmContext): Unit = {
+    val fb = newFunctionBuilder(genFunctionID.stringEquals)
+    val str1Param = fb.addParam("str1", RefType.anyref)
+    val str2Param = fb.addParam("str2", RefType.anyref)
+    fb.setResultType(Int32)
+
+    fb.block(Int32) { doneLabel =>
+      // Block to handle the case where both are i16Array
+      fb.block(RefType.anyref) { notBothArray =>
+        fb += LocalGet(str1Param)
+        fb += BrOnCastFail(
+          notBothArray,
+          RefType.anyref,
+          RefType.nullable(genTypeID.i16Array)
+        )
+        fb += LocalGet(str2Param)
+        fb += BrOnCastFail(
+          notBothArray,
+          RefType.anyref,
+          RefType.nullable(genTypeID.i16Array)
+        )
+        fb += Call(genFunctionID.arrayEquals)
+        fb += Br(doneLabel)
+      } // end of block notBothArray
+      fb += Drop
+
+      // Block to handle the case where both are JS string
+      fb.block(RefType.nullable(genTypeID.i16Array)) { notBothJS =>
+        fb += LocalGet(str1Param)
+        fb += BrOnCast(
+          notBothJS,
+          RefType.anyref,
+          RefType.nullable(genTypeID.i16Array)
+        )
+        fb += LocalGet(str2Param)
+        fb += BrOnCast(
+          notBothJS,
+          RefType.anyref,
+          RefType.nullable(genTypeID.i16Array)
+        )
+        fb += Call(genFunctionID.is)
+        fb += Br(doneLabel)
+      } // end of block notBothJS
+      fb += Drop
+
+      // i16Array vs JS String, return 0 (false)
+      fb += I32Const(0)
+    } // end of block doneLabel
 
     fb.buildAndAddToModule()
   }

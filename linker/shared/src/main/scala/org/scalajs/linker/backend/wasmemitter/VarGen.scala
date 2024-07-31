@@ -154,9 +154,12 @@ object VarGen {
     // wasm native strings
     case object wasmStringConcat extends FunctionID
     case object createArrayFromJSString extends FunctionID
+    case object createArrayFromJSStringNullable extends FunctionID
     case object createJSStringFromArray extends FunctionID
+    case object createJSStringFromArrayNullable extends FunctionID
     case object nonNullString extends FunctionID
     case object arrayEquals extends FunctionID
+    case object stringEquals extends FunctionID
 
     // JS helpers
 

@@ -432,8 +432,7 @@ private class FunctionEmitter private (
       case (StringType, AnyType) if typeTransformer.useWasmString =>
         fb += wa.Call(genFunctionID.createJSStringFromArray)
       case (ClassType(BoxedStringClass), AnyType) if typeTransformer.useWasmString =>
-        fb += wa.Call(genFunctionID.nonNullString)
-        fb += wa.Call(genFunctionID.createJSStringFromArray)
+        fb += wa.Call(genFunctionID.createJSStringFromArrayNullable)
       case (primType: PrimTypeWithRef, _) =>
         // box
         primType match {
@@ -727,7 +726,7 @@ private class FunctionEmitter private (
     def genReceiverNotNull(): Unit = {
       genTreeAuto(receiver)
       fb += wa.RefAsNonNull
-      genAdaptArgString(receiver.tpe, typeTransformer.useWasmString, !receiverClassInfo.kind.isJSType)
+      genAdaptArgString(receiver.tpe, typeTransformer.useWasmString, !receiverClassInfo.kind.isJSType, argNullable = false)
     }
 
     /* Generates a resolved call to a method of a hijacked class.
@@ -856,8 +855,13 @@ private class FunctionEmitter private (
         if (methodName == toStringMethodName) {
           // By spec, toString() is special
           assert(argsLocals.isEmpty)
-          fb += wa.Call(genFunctionID.jsValueToString)
-          if (typeTransformer.useWasmString) fb += wa.Call(genFunctionID.createArrayFromJSString)
+          if (typeTransformer.useWasmString && receiverClassName == CharSequenceClass) {
+            // do nothing
+            fb += wa.RefCast(watpe.RefType(genTypeID.i16Array))
+          } else {
+            fb += wa.Call(genFunctionID.jsValueToString)
+            if (typeTransformer.useWasmString) fb += wa.Call(genFunctionID.createArrayFromJSString)
+          }
         } else if (receiverClassName == JLNumberClass) {
           // the value must be a `number`, hence we can unbox to `double`
           genUnbox(DoubleType)
@@ -947,7 +951,11 @@ private class FunctionEmitter private (
             case SpecialNames.hashCodeMethodName =>
               fb += wa.Call(genFunctionID.identityHashCode)
             case `equalsMethodName` =>
-              fb += wa.Call(genFunctionID.is)
+              if (typeTransformer.useWasmString) {
+                fb += wa.Call(genFunctionID.stringEquals)
+              } else {
+                fb += wa.Call(genFunctionID.is)
+              }
             case _ =>
               genHijackedClassCall(ObjectClass)
           }
@@ -1049,7 +1057,7 @@ private class FunctionEmitter private (
               genUnbox(primReceiverType)
             }
         }
-        genAdaptArgString(receiver.tpe, typeTransformer.useWasmString, !classInfo.kind.isJSType)
+        genAdaptArgString(receiver.tpe, typeTransformer.useWasmString, !classInfo.kind.isJSType, argNullable = false)
 
         genArgs(args, methodName, classInfo.kind)
 
@@ -1066,16 +1074,17 @@ private class FunctionEmitter private (
   private def genAdaptArgString(
     paramType: Type,
     callerUsesWasmStr: Boolean,
-    calleeUsesWasmStr: Boolean
+    calleeUsesWasmStr: Boolean,
+    argNullable: Boolean = true
   ): Unit = {
     if (paramType == StringType || paramType == ClassType(BoxedStringClass)) {
-      val nullable = paramType == ClassType(BoxedStringClass)
+      val nullable = (paramType == ClassType(BoxedStringClass) && argNullable)
       if (callerUsesWasmStr && !calleeUsesWasmStr) {
-        if (nullable) fb += wa.Call(genFunctionID.nonNullString)
-        fb += wa.Call(genFunctionID.createJSStringFromArray)
+        if (nullable) fb += wa.Call(genFunctionID.createJSStringFromArrayNullable)
+        else fb += wa.Call(genFunctionID.createJSStringFromArray)
       } else if (!callerUsesWasmStr && calleeUsesWasmStr) {
-        if (nullable) fb += wa.Call(genFunctionID.jsValueToStringForConcat)
-        fb += wa.Call(genFunctionID.createArrayFromJSString)
+        if (nullable) fb += wa.Call(genFunctionID.createArrayFromJSStringNullable)
+        else fb += wa.Call(genFunctionID.createArrayFromJSString)
       }
     }
   }
@@ -1088,11 +1097,11 @@ private class FunctionEmitter private (
     if (resultType == StringType || resultType == ClassType(BoxedStringClass)) {
       val nullable = resultType == ClassType(BoxedStringClass)
       if (callerUsesWasmStr && !calleeUsesWasmStr) {
-        if (nullable) fb += wa.Call(genFunctionID.jsValueToStringForConcat)
-        fb += wa.Call(genFunctionID.createArrayFromJSString)
+        if (nullable) fb += wa.Call(genFunctionID.createArrayFromJSStringNullable)
+        else fb += wa.Call(genFunctionID.createArrayFromJSString)
       } else if (!callerUsesWasmStr && calleeUsesWasmStr) {
-        if (nullable) fb += wa.Call(genFunctionID.nonNullString)
-        fb += wa.Call(genFunctionID.createJSStringFromArray)
+        if (nullable) fb += wa.Call(genFunctionID.createJSStringFromArrayNullable)
+        else fb += wa.Call(genFunctionID.createJSStringFromArray)
       }
     }
   }
@@ -1399,68 +1408,14 @@ private class FunctionEmitter private (
 
     // TODO Optimize this when the operands have a better type than `any`
 
+    genTree(lhs, AnyType)
+    genTree(rhs, AnyType)
+
+    markPosition(tree)
+
     if (typeTransformer.useWasmString) {
-      val lhsLocal = addSyntheticLocal(watpe.RefType.anyref)
-      val rhsLocal = addSyntheticLocal(watpe.RefType.anyref)
-
-      genTree(lhs, AnyType)
-      fb += wa.LocalSet(lhsLocal)
-      genTree(rhs, AnyType)
-      fb += wa.LocalSet(rhsLocal)
-
-      // maybe one of the lhs and rhs can be i16array?
-      fb.block(watpe.Int32) { doneLabel =>
-        // Block to handle the case where both are i16Array
-        fb.block(watpe.RefType.anyref) { notI16ArrayLabel =>
-          // Check if lhs is i16Array
-          fb += wa.LocalGet(lhsLocal)
-          fb += wa.BrOnCastFail(
-            notI16ArrayLabel,
-            watpe.RefType.anyref,
-            watpe.RefType.nullable(genTypeID.i16Array)
-          )
-          // Check if rhs is i16Array
-          fb += wa.LocalGet(rhsLocal)
-          fb += wa.BrOnCastFail(
-            notI16ArrayLabel,
-            watpe.RefType.anyref,
-            watpe.RefType.nullable(genTypeID.i16Array)
-          )
-          // Both are i16Array, call arrayEquals
-          fb += wa.Call(genFunctionID.arrayEquals)
-          fb += wa.Br(doneLabel)
-        } // end of block notI16ArrayLabel
-        fb += wa.Drop
-
-        // lhs or rhs (or both) are not i16Array
-        fb.block(watpe.RefType.nullable(genTypeID.i16Array)) { i16ArrayLabel =>
-          fb += wa.LocalGet(lhsLocal)
-          fb += wa.BrOnCast(
-            i16ArrayLabel,
-            watpe.RefType.anyref,
-            watpe.RefType.nullable(genTypeID.i16Array)
-          )
-          fb += wa.LocalGet(rhsLocal)
-          fb += wa.BrOnCast(
-            i16ArrayLabel,
-            watpe.RefType.anyref,
-            watpe.RefType.nullable(genTypeID.i16Array)
-          )
-          // both lhs and rhs are not i16Array
-          fb += wa.Call(genFunctionID.is)
-          fb += wa.Br(doneLabel)
-        } // end of i16ArrayLabel
-        // one of them is i16Array and one is not, return 0
-        fb += wa.Drop
-        fb += wa.I32Const(0)
-      } // end of block doneLabel
-
+      fb += wa.Call(genFunctionID.stringEquals)
     } else {
-      genTree(lhs, AnyType)
-      genTree(rhs, AnyType)
-
-      markPosition(tree)
-
       fb += wa.Call(genFunctionID.is)
     }
 
@@ -1879,7 +1834,8 @@ private class FunctionEmitter private (
       case UndefType =>
         fb += wa.Call(genFunctionID.isUndef)
       case StringType =>
-        fb += wa.Call(genFunctionID.isString)
+        if (typeTransformer.useWasmString) fb += wa.RefTest(watpe.RefType(genTypeID.i16Array))
+        else fb += wa.Call(genFunctionID.isString)
       case CharType =>
         val structTypeID = genTypeID.forClass(SpecialNames.CharBoxClass)
         fb += wa.RefTest(watpe.RefType(structTypeID))
@@ -2013,12 +1969,30 @@ private class FunctionEmitter private (
 
           case _ =>
             targetWasmType match {
+
+              // when the surrownding class uses i16Array for String representation
+              // downcast (ref null? any) -> (ref null? (array mut i16))
+              // might requires a translation from JS String -> i16Array String
+              case targetWasmType @ watpe.RefType(_, heapType) if
+                  typeTransformer.useWasmString &&
+                  heapType == watpe.HeapType(genTypeID.i16Array) =>
+                sourceWasmType match {
+                  case sourceWasmType: watpe.RefType =>
+                    val from = addSyntheticLocal(watpe.RefType.anyref)
+                    fb += wa.LocalSet(from)
+                    fb.block(targetWasmType) { foo =>
+                      fb += wa.LocalGet(from)
+                      // In case the receiver value is already an i16Array
+                      fb += wa.BrOnCast(foo, watpe.RefType.anyref, targetWasmType)
+                      if (sourceWasmType.nullable) fb += wa.Call(genFunctionID.createArrayFromJSStringNullable)
+                      else fb += wa.Call(genFunctionID.createArrayFromJSString)
+                    }
+                  case _ =>
+                    ()
+                }
+
               case watpe.RefType(true, watpe.HeapType.Any) =>
                 () // nothing to do
-              case watpe.RefType(_, heapType)
-                  if heapType == watpe.HeapType(genTypeID.i16Array) && typeTransformer.useWasmString =>
-                fb += wa.RefAsNonNull
-                fb += wa.Call(genFunctionID.createArrayFromJSString)
               case targetWasmType: watpe.RefType =>
                 fb += wa.RefCast(targetWasmType)
               case _ =>
@@ -2045,8 +2019,8 @@ private class FunctionEmitter private (
 
       case StringType =>
         fb += wa.RefAsNonNull
+        fb += wa.Call(genFunctionID.jsValueToString) // for `undefined`
         if (typeTransformer.useWasmString) {
-          // fb += wa.Call(genFunctionID.jsValueToString) // for `undefined`
           fb += wa.Call(genFunctionID.createArrayFromJSString)
         }
 
@@ -2942,7 +2916,11 @@ private class FunctionEmitter private (
               fb += wa.BrIf(label)
             case StringLiteral(value) =>
               fb ++= ctx.stringPool.getConstantStringInstr(value)
-              fb += wa.Call(genFunctionID.is)
+              if (typeTransformer.useWasmString) {
+                fb += wa.Call(genFunctionID.stringEquals)
+              } else {
+                fb += wa.Call(genFunctionID.is)
+              }
               fb += wa.BrIf(label)
             case Null() =>
               fb += wa.RefIsNull
