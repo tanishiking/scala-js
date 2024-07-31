@@ -1823,6 +1823,13 @@ private class FunctionEmitter private (
     fb += wa.Throw(genTagID.exception)
   }
 
+  private def isStringType(tpe: Type): Boolean = {
+    tpe match {
+      case StringType | ClassType(BoxedBooleanClass) | ClassType(CharSequenceClass) => true
+      case _ => false
+    }
+  }
+
   private def genIsInstanceOf(tree: IsInstanceOf)(implicit typeTransformer: TypeTransformer): Type = {
     val IsInstanceOf(expr, testType) = tree
 
@@ -1834,7 +1841,18 @@ private class FunctionEmitter private (
       case UndefType =>
         fb += wa.Call(genFunctionID.isUndef)
       case StringType =>
-        if (typeTransformer.useWasmString) fb += wa.RefTest(watpe.RefType(genTypeID.i16Array))
+        if (typeTransformer.useWasmString && isStringType(expr.tpe)) {
+          val receiver = addSyntheticLocal(watpe.RefType.anyref)
+          fb += wa.LocalTee(receiver)
+          fb += wa.Call(genFunctionID.isString)
+          fb.ifThenElse(watpe.RefType.anyref) {
+            fb += wa.LocalGet(receiver)
+            genUnbox(StringType)
+          } {
+            fb += wa.LocalGet(receiver)
+          }
+          fb += wa.RefTest(watpe.RefType.nullable(genTypeID.i16Array))
+        }
         else fb += wa.Call(genFunctionID.isString)
       case CharType =>
         val structTypeID = genTypeID.forClass(SpecialNames.CharBoxClass)
