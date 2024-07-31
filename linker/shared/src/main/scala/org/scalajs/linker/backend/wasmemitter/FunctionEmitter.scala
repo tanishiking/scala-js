@@ -2760,6 +2760,11 @@ private class FunctionEmitter private (
               case watpe.RefType.anyref =>
                 // nothing to do
                 ()
+              case refType @ watpe.RefType(nullable, heapType) if
+                  typeTransformer.useWasmString &&
+                  heapType == watpe.HeapType(genTypeID.i16Array) =>
+                if (nullable) fb += wa.Call(genFunctionID.createArrayFromJSStringNullable)
+                else fb += wa.Call(genFunctionID.createArrayFromJSString)
               case refType: watpe.RefType =>
                 fb += wa.RefCast(refType)
               case otherType =>
