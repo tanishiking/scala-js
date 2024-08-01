@@ -788,8 +788,11 @@ private class FunctionEmitter private (
       val resultType = typeTransformer.transformResultType(tree.tpe)
 
       fb.block(resultType) { labelDone =>
-        def pushArgs(argsLocals: List[wanme.LocalID]): Unit =
-          argsLocals.foreach(argLocal => fb += wa.LocalGet(argLocal))
+        def pushArgs(argsLocals: List[(wanme.LocalID, Type)]): Unit =
+          argsLocals.foreach {
+            argLocal => fb += wa.LocalGet(argLocal._1)
+            genAdaptArgString(argLocal._2, typeTransformer.useWasmString, !receiverClassInfo.kind.isJSType)
+          }
 
         /* First try the case where the value is one of our objects.
          * We load the receiver and arguments inside the block `notOurObject`.
@@ -798,7 +801,7 @@ private class FunctionEmitter private (
          * For the case with the args, it does not hurt either way. We could
          * move it out, but that would make for a less consistent codegen.
          */
-        val argsLocals = fb.block(watpe.RefType.any) { labelNotOurObject =>
+        val argsLocals: List[(wanme.LocalID, Type)] = fb.block(watpe.RefType.any) { labelNotOurObject =>
           // Load receiver and arguments and store them in temporary variables
           genReceiverNotNull()
           val argsLocals = if (args.isEmpty) {
@@ -817,13 +820,13 @@ private class FunctionEmitter private (
             val receiverLocal = addSyntheticLocal(watpe.RefType.any)
 
             fb += wa.LocalSet(receiverLocal)
-            val argsLocals: List[wanme.LocalID] =
+            val argsLocals: List[(wanme.LocalID, Type)] =
               for ((arg, typeRef) <- args.zip(methodName.paramTypeRefs)) yield {
                 val tpe = ctx.inferTypeFromTypeRef(typeRef)
                 genTree(arg, tpe)
                 val localID = addSyntheticLocal(typeTransformer.transformLocalType(tpe))
                 fb += wa.LocalSet(localID)
-                localID
+                (localID, tpe)
               }
             fb += wa.LocalGet(receiverLocal)
             argsLocals
@@ -857,7 +860,7 @@ private class FunctionEmitter private (
           assert(argsLocals.isEmpty)
           if (typeTransformer.useWasmString && receiverClassName == CharSequenceClass) {
             // do nothing
-            fb += wa.RefCast(watpe.RefType(genTypeID.i16Array))
+            fb += wa.RefCast(watpe.RefType(genTypeID.i16Array)) // ???
           } else {
             fb += wa.Call(genFunctionID.jsValueToString)
             if (typeTransformer.useWasmString) fb += wa.Call(genFunctionID.createArrayFromJSString)
