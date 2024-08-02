@@ -433,6 +433,29 @@ private class FunctionEmitter private (
         fb += wa.Call(genFunctionID.createJSStringFromArray)
       case (ClassType(BoxedStringClass), AnyType) if typeTransformer.useWasmString =>
         fb += wa.Call(genFunctionID.createJSStringFromArrayNullable)
+      case (ClassType(CharSequenceClass), AnyType) if typeTransformer.useWasmString =>
+        // should be either an instance of `CharSequence` or `i16Array`
+        // CharSequence.toString
+        val objectClassInfo = ctx.getClassInfo(ObjectClass)
+        val receiver = addSyntheticLocal(watpe.RefType.anyref)
+        val receiverLocalForDispatch = addSyntheticLocal(watpe.RefType(genTypeID.ObjectStruct))
+        fb += wa.LocalSet(receiver)
+        fb.block(watpe.RefType.nullable(genTypeID.i16Array)) { labelDone =>
+          fb.block(watpe.RefType.anyref) { labelNotOurObject =>
+            fb += wa.LocalGet(receiver)
+            fb += wa.BrOnCastFail(
+              labelNotOurObject,
+              watpe.RefType.anyref,
+              watpe.RefType(genTypeID.ObjectStruct)
+            )
+            fb += wa.LocalTee(receiverLocalForDispatch)
+            genTableDispatch(objectClassInfo, toStringMethodName, receiverLocalForDispatch) // i16Array
+            fb += wa.Br(labelDone)
+          } // end of labelNotOurObject
+          // otherwise, it should be i16Array
+          fb += wa.RefCast(watpe.RefType.nullable(genTypeID.i16Array))
+        }
+        fb += wa.Call(genFunctionID.createJSStringFromArrayNullable)
       case (primType: PrimTypeWithRef, _) =>
         // box
         primType match {
