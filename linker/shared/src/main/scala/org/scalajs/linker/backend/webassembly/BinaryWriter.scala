@@ -22,8 +22,11 @@ import Identitities._
 import Modules._
 import Types._
 
-class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
+private sealed class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
   import BinaryWriter._
+
+  /** The big output buffer. */
+  private[BinaryWriter] val buf = new Buffer()
 
   private val typeIdxValues: Map[TypeID, Int] =
     module.types.flatMap(_.subTypes).map(_.id).zipWithIndex.toMap
@@ -65,6 +68,8 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
   }
 
   private var localIdxValues: Option[Map[LocalID, Int]] = None
+
+  /** A stack of the labels in scope (innermost labels are on top of the stack). */
   private var labelsInScope: List[Option[LabelID]] = Nil
 
   private def withLocalIdxValues(values: Map[LocalID, Int])(f: => Unit): Unit = {
@@ -74,88 +79,85 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
     finally localIdxValues = saved
   }
 
-  protected def emitStartFuncPosition(buf: Buffer, pos: Position): Unit = ()
-  protected def emitPosition(buf: Buffer, pos: Position): Unit = ()
-  protected def emitEndFuncPosition(buf: Buffer): Unit = ()
-  protected def emitSourceMapSection(buf: Buffer): Unit = ()
+  protected def emitStartFuncPosition(pos: Position): Unit = ()
+  protected def emitPosition(pos: Position): Unit = ()
+  protected def emitEndFuncPosition(): Unit = ()
+  protected def emitSourceMapSection(): Unit = ()
 
   def write(): Array[Byte] = {
-    val fullOutput = new Buffer()
-
     // magic header: null char + "asm"
-    fullOutput.byte(0)
-    fullOutput.byte('a')
-    fullOutput.byte('s')
-    fullOutput.byte('m')
+    buf.byte(0)
+    buf.byte('a')
+    buf.byte('s')
+    buf.byte('m')
 
     // version
-    fullOutput.byte(1)
-    fullOutput.byte(0)
-    fullOutput.byte(0)
-    fullOutput.byte(0)
+    buf.byte(1)
+    buf.byte(0)
+    buf.byte(0)
+    buf.byte(0)
 
-    writeSection(fullOutput, SectionType)(writeTypeSection(_))
-    writeSection(fullOutput, SectionImport)(writeImportSection(_))
-    writeSection(fullOutput, SectionFunction)(writeFunctionSection(_))
-    writeSection(fullOutput, SectionTag)(writeTagSection(_))
-    writeSection(fullOutput, SectionGlobal)(writeGlobalSection(_))
-    writeSection(fullOutput, SectionExport)(writeExportSection(_))
+    writeSection(SectionType)(writeTypeSection())
+    writeSection(SectionImport)(writeImportSection())
+    writeSection(SectionFunction)(writeFunctionSection())
+    writeSection(SectionTag)(writeTagSection())
+    writeSection(SectionGlobal)(writeGlobalSection())
+    writeSection(SectionExport)(writeExportSection())
     if (module.start.isDefined)
-      writeSection(fullOutput, SectionStart)(writeStartSection(_))
-    writeSection(fullOutput, SectionElement)(writeElementSection(_))
+      writeSection(SectionStart)(writeStartSection())
+    writeSection(SectionElement)(writeElementSection())
     if (module.datas.nonEmpty)
-      writeSection(fullOutput, SectionDataCount)(writeDataCountSection(_))
-    writeSection(fullOutput, SectionCode)(writeCodeSection(_))
-    writeSection(fullOutput, SectionData)(writeDataSection(_))
+      writeSection(SectionDataCount)(writeDataCountSection())
+    writeSection(SectionCode)(writeCodeSection())
+    writeSection(SectionData)(writeDataSection())
 
     if (emitDebugInfo)
-      writeCustomSection(fullOutput, "name")(writeNameCustomSection(_))
+      writeCustomSection("name")(writeNameCustomSection())
 
-    emitSourceMapSection(fullOutput)
+    emitSourceMapSection()
 
-    fullOutput.result()
+    buf.result()
   }
 
-  private def writeSection(fullOutput: Buffer, sectionID: Byte)(f: Buffer => Unit): Unit = {
-    fullOutput.byte(sectionID)
-    fullOutput.byteLengthSubSection(f)
+  private def writeSection(sectionID: Byte)(sectionContent: => Unit): Unit = {
+    buf.byte(sectionID)
+    buf.byteLengthSubSection(sectionContent)
   }
 
-  protected final def writeCustomSection(fullOutput: Buffer, customSectionName: String)(
-      f: Buffer => Unit
-  ): Unit = {
-    writeSection(fullOutput, SectionCustom) { buf =>
+  protected final def writeCustomSection(customSectionName: String)(
+      sectionContent: => Unit): Unit = {
+    writeSection(SectionCustom) {
       buf.name(customSectionName)
-      f(buf)
+      sectionContent
     }
   }
 
-  private def writeTypeSection(buf: Buffer): Unit = {
+  private def writeTypeSection(): Unit = {
     buf.vec(module.types) { recType =>
       recType.subTypes match {
         case singleSubType :: Nil =>
-          writeSubType(buf, singleSubType)
+          writeSubType(singleSubType)
         case subTypes =>
           buf.byte(0x4E) // `rectype`
-          buf.vec(subTypes)(writeSubType(buf, _))
+          buf.vec(subTypes)(writeSubType(_))
       }
     }
   }
 
-  private def writeSubType(buf: Buffer, subType: SubType): Unit = {
+  private def writeSubType(subType: SubType): Unit = {
     subType match {
       case SubType(_, _, true, None, compositeType) =>
-        writeCompositeType(buf, compositeType)
+        writeCompositeType(compositeType)
       case _ =>
         buf.byte(if (subType.isFinal) 0x4F else 0x50)
-        buf.opt(subType.superType)(writeTypeIdx(buf, _))
-        writeCompositeType(buf, subType.compositeType)
+        buf.opt(subType.superType)(writeTypeIdx(_))
+        writeCompositeType(subType.compositeType)
     }
   }
 
-  private def writeCompositeType(buf: Buffer, compositeType: CompositeType): Unit = {
+  private def writeCompositeType(compositeType: CompositeType): Unit = {
     def writeFieldType(fieldType: FieldType): Unit = {
-      writeType(buf, fieldType.tpe)
+      writeType(fieldType.tpe)
       buf.boolean(fieldType.isMutable)
     }
 
@@ -168,12 +170,12 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
         buf.vec(fields)(field => writeFieldType(field.fieldType))
       case FunctionType(params, results) =>
         buf.byte(0x60) // func
-        writeResultType(buf, params)
-        writeResultType(buf, results)
+        writeResultType(params)
+        writeResultType(results)
     }
   }
 
-  private def writeImportSection(buf: Buffer): Unit = {
+  private def writeImportSection(): Unit = {
     buf.vec(module.imports) { imprt =>
       buf.name(imprt.module)
       buf.name(imprt.name)
@@ -181,71 +183,71 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
       imprt.desc match {
         case ImportDesc.Func(_, _, typeID) =>
           buf.byte(0x00) // func
-          writeTypeIdx(buf, typeID)
+          writeTypeIdx(typeID)
         case ImportDesc.Global(_, _, isMutable, tpe) =>
           buf.byte(0x03) // global
-          writeType(buf, tpe)
+          writeType(tpe)
           buf.boolean(isMutable)
         case ImportDesc.Tag(_, _, typeID) =>
           buf.byte(0x04) // tag
           buf.byte(0x00) // exception kind (that is the only valid kind for now)
-          writeTypeIdx(buf, typeID)
+          writeTypeIdx(typeID)
       }
     }
   }
 
-  private def writeFunctionSection(buf: Buffer): Unit = {
+  private def writeFunctionSection(): Unit = {
     buf.vec(module.funcs) { fun =>
-      writeTypeIdx(buf, fun.typeID)
+      writeTypeIdx(fun.typeID)
     }
   }
 
-  private def writeTagSection(buf: Buffer): Unit = {
+  private def writeTagSection(): Unit = {
     buf.vec(module.tags) { tag =>
       buf.byte(0x00) // exception kind (that is the only valid kind for now)
-      writeTypeIdx(buf, tag.typeID)
+      writeTypeIdx(tag.typeID)
     }
   }
 
-  private def writeGlobalSection(buf: Buffer): Unit = {
+  private def writeGlobalSection(): Unit = {
     buf.vec(module.globals) { global =>
-      writeType(buf, global.tpe)
+      writeType(global.tpe)
       buf.boolean(global.isMutable)
-      writeExpr(buf, global.init)
+      writeExpr(global.init)
     }
   }
 
-  private def writeExportSection(buf: Buffer): Unit = {
+  private def writeExportSection(): Unit = {
     buf.vec(module.exports) { exp =>
       buf.name(exp.name)
       exp.desc match {
         case ExportDesc.Func(id) =>
           buf.byte(0x00)
-          writeFuncIdx(buf, id)
+          writeFuncIdx(id)
         case ExportDesc.Global(id) =>
           buf.byte(0x03)
-          writeGlobalIdx(buf, id)
+          writeGlobalIdx(id)
       }
     }
   }
 
-  private def writeStartSection(buf: Buffer): Unit = {
-    writeFuncIdx(buf, module.start.get)
+  private def writeStartSection(): Unit = {
+    writeFuncIdx(module.start.get)
   }
 
-  private def writeElementSection(buf: Buffer): Unit = {
+  private def writeElementSection(): Unit = {
     buf.vec(module.elems) { element =>
       element.mode match {
         case Element.Mode.Declarative => buf.byte(7)
       }
-      writeType(buf, element.tpe)
+      writeType(element.tpe)
       buf.vec(element.init) { expr =>
-        writeExpr(buf, expr)
+        writeExpr(expr)
       }
     }
   }
 
-  private def writeDataSection(buf: Buffer): Unit = {
+  private def writeDataSection(): Unit = {
     buf.vec(module.datas) { data =>
       data.mode match {
         case Data.Mode.Passive => buf.byte(1)
@@ -254,16 +256,16 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
     }
   }
 
-  private def writeDataCountSection(buf: Buffer): Unit =
+  private def writeDataCountSection(): Unit =
     buf.u32(module.datas.size)
 
-  private def writeCodeSection(buf: Buffer): Unit = {
+  private def writeCodeSection(): Unit = {
     buf.vec(module.funcs) { func =>
-      buf.byteLengthSubSection(writeFunc(_, func))
+      buf.byteLengthSubSection(writeFunc(func))
     }
   }
 
-  private def writeNameCustomSection(buf: Buffer): Unit = {
+  private def writeNameCustomSection(): Unit = {
     // Currently, we only emit the function names
 
     val importFunctionNames = module.imports.collect {
@@ -275,30 +277,30 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
     val allFunctionNames = importFunctionNames ::: definedFunctionNames
 
     buf.byte(0x01) // function names
-    buf.byteLengthSubSection { buf =>
+    buf.byteLengthSubSection {
       buf.vec(allFunctionNames) { elem =>
-        writeFuncIdx(buf, elem._1)
+        writeFuncIdx(elem._1)
         buf.name(elem._2.get)
       }
     }
   }
 
-  private def writeFunc(buf: Buffer, func: Function): Unit = {
-    emitStartFuncPosition(buf, func.pos)
+  private def writeFunc(func: Function): Unit = {
+    emitStartFuncPosition(func.pos)
 
     buf.vec(func.locals) { local =>
       buf.u32(1)
-      writeType(buf, local.tpe)
+      writeType(local.tpe)
     }
 
     withLocalIdxValues((func.params ::: func.locals).map(_.id).zipWithIndex.toMap) {
-      writeExpr(buf, func.body)
+      writeExpr(func.body)
     }
 
-    emitEndFuncPosition(buf)
+    emitEndFuncPosition()
   }
 
-  private def writeType(buf: Buffer, tpe: StorageType): Unit = {
+  private def writeType(tpe: StorageType): Unit = {
     tpe match {
       case tpe: SimpleType => buf.byte(tpe.binaryCode)
       case tpe: PackedType => buf.byte(tpe.binaryCode)
@@ -308,65 +310,65 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
 
       case RefType(nullable, heapType) =>
         buf.byte(if (nullable) 0x63 else 0x64)
-        writeHeapType(buf, heapType)
+        writeHeapType(heapType)
     }
   }
 
-  private def writeHeapType(buf: Buffer, heapType: HeapType): Unit = {
+  private def writeHeapType(heapType: HeapType): Unit = {
     heapType match {
-      case HeapType.Type(typeID)          => writeTypeIdxs33(buf, typeID)
+      case HeapType.Type(typeID)          => writeTypeIdxs33(typeID)
       case heapType: HeapType.AbsHeapType => buf.byte(heapType.binaryCode)
     }
   }
 
-  private def writeResultType(buf: Buffer, resultType: List[Type]): Unit =
-    buf.vec(resultType)(writeType(buf, _))
+  private def writeResultType(resultType: List[Type]): Unit =
+    buf.vec(resultType)(writeType(_))
 
-  private def writeTypeIdx(buf: Buffer, typeID: TypeID): Unit =
+  private def writeTypeIdx(typeID: TypeID): Unit =
     buf.u32(typeIdxValues(typeID))
 
-  private def writeFieldIdx(buf: Buffer, typeID: TypeID, fieldID: FieldID): Unit =
+  private def writeFieldIdx(typeID: TypeID, fieldID: FieldID): Unit =
     buf.u32(fieldIdxValues(typeID)(fieldID))
 
-  private def writeDataIdx(buf: Buffer, dataID: DataID): Unit =
+  private def writeDataIdx(dataID: DataID): Unit =
     buf.u32(dataIdxValues(dataID))
 
-  private def writeTypeIdxs33(buf: Buffer, typeID: TypeID): Unit =
+  private def writeTypeIdxs33(typeID: TypeID): Unit =
     buf.s33OfUInt(typeIdxValues(typeID))
 
-  private def writeFuncIdx(buf: Buffer, funcID: FunctionID): Unit =
+  private def writeFuncIdx(funcID: FunctionID): Unit =
     buf.u32(funcIdxValues(funcID))
 
-  private def writeTagIdx(buf: Buffer, tagID: TagID): Unit =
+  private def writeTagIdx(tagID: TagID): Unit =
     buf.u32(tagIdxValues(tagID))
 
-  private def writeGlobalIdx(buf: Buffer, globalID: GlobalID): Unit =
+  private def writeGlobalIdx(globalID: GlobalID): Unit =
     buf.u32(globalIdxValues(globalID))
 
-  private def writeLocalIdx(buf: Buffer, localID: LocalID): Unit = {
+  private def writeLocalIdx(localID: LocalID): Unit = {
     localIdxValues match {
       case Some(values) => buf.u32(values(localID))
       case None         => throw new IllegalStateException("Local name table is not available")
     }
   }
 
-  private def writeLabelIdx(buf: Buffer, labelID: LabelID): Unit = {
+  private def writeLabelIdx(labelID: LabelID): Unit = {
     val relativeNumber = labelsInScope.indexOf(Some(labelID))
     if (relativeNumber < 0)
       throw new IllegalStateException(s"Cannot find $labelID in scope")
     buf.u32(relativeNumber)
   }
 
-  private def writeExpr(buf: Buffer, expr: Expr): Unit = {
+  private def writeExpr(expr: Expr): Unit = {
     for (instr <- expr.instr)
-      writeInstr(buf, instr)
+      writeInstr(instr)
     buf.byte(0x0B) // end
   }
 
-  private def writeInstr(buf: Buffer, instr: Instr): Unit = {
+  private def writeInstr(instr: Instr): Unit = {
     instr match {
       case PositionMark(pos) =>
-        emitPosition(buf, pos)
+        emitPosition(pos)
 
       case _ =>
         val opcode = instr.opcode
@@ -379,7 +381,7 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
           buf.byte(opcode.toByte)
         }
 
-        writeInstrImmediates(buf, instr)
+        writeInstrImmediates(instr)
 
         instr match {
           case instr: StructuredLabeledInstr =>
@@ -393,13 +395,13 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
     }
   }
 
-  private def writeInstrImmediates(buf: Buffer, instr: Instr): Unit = {
+  private def writeInstrImmediates(instr: Instr): Unit = {
     def writeBrOnCast(labelIdx: LabelID, from: RefType, to: RefType): Unit = {
       val castFlags = ((if (from.nullable) 1 else 0) | (if (to.nullable) 2 else 0)).toByte
       buf.byte(castFlags)
-      writeLabelIdx(buf, labelIdx)
-      writeHeapType(buf, from.heapType)
-      writeHeapType(buf, to.heapType)
+      writeLabelIdx(labelIdx)
+      writeHeapType(from.heapType)
+      writeHeapType(to.heapType)
     }
 
     instr match {
@@ -408,26 +410,26 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
       case instr: SimpleInstr =>
         ()
       case instr: BlockTypeLabeledInstr =>
-        writeBlockType(buf, instr.blockTypeArgument)
+        writeBlockType(instr.blockTypeArgument)
       case instr: LabelInstr =>
-        writeLabelIdx(buf, instr.labelArgument)
+        writeLabelIdx(instr.labelArgument)
       case instr: FuncInstr =>
-        writeFuncIdx(buf, instr.funcArgument)
+        writeFuncIdx(instr.funcArgument)
       case instr: TypeInstr =>
-        writeTypeIdx(buf, instr.typeArgument)
+        writeTypeIdx(instr.typeArgument)
       case instr: TagInstr =>
-        writeTagIdx(buf, instr.tagArgument)
+        writeTagIdx(instr.tagArgument)
       case instr: LocalInstr =>
-        writeLocalIdx(buf, instr.localArgument)
+        writeLocalIdx(instr.localArgument)
       case instr: GlobalInstr =>
-        writeGlobalIdx(buf, instr.globalArgument)
+        writeGlobalIdx(instr.globalArgument)
       case instr: HeapTypeInstr =>
-        writeHeapType(buf, instr.heapTypeArgument)
+        writeHeapType(instr.heapTypeArgument)
       case instr: RefTypeInstr =>
-        writeHeapType(buf, instr.refTypeArgument.heapType)
+        writeHeapType(instr.refTypeArgument.heapType)
       case instr: StructFieldInstr =>
-        writeTypeIdx(buf, instr.structTypeID)
-        writeFieldIdx(buf, instr.structTypeID, instr.fieldID)
+        writeTypeIdx(instr.structTypeID)
+        writeFieldIdx(instr.structTypeID, instr.fieldID)
 
       // Specific instructions with unique-ish shapes
 
@@ -437,28 +439,28 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
       case F64Const(v) => buf.f64(v)
 
       case BrTable(labelIdxVector, defaultLabelIdx) =>
-        buf.vec(labelIdxVector)(writeLabelIdx(buf, _))
-        writeLabelIdx(buf, defaultLabelIdx)
+        buf.vec(labelIdxVector)(writeLabelIdx(_))
+        writeLabelIdx(defaultLabelIdx)
 
       case TryTable(blockType, clauses, _) =>
-        writeBlockType(buf, blockType)
+        writeBlockType(blockType)
         buf.vec(clauses) { clause =>
           buf.byte(clause.opcode.toByte)
-          clause.tag.foreach(tag => writeTagIdx(buf, tag))
-          writeLabelIdx(buf, clause.label)
+          clause.tag.foreach(tag => writeTagIdx(tag))
+          writeLabelIdx(clause.label)
         }
 
       case ArrayNewData(typeIdx, dataIdx) =>
-        writeTypeIdx(buf, typeIdx)
-        writeDataIdx(buf, dataIdx)
+        writeTypeIdx(typeIdx)
+        writeDataIdx(dataIdx)
 
       case ArrayNewFixed(typeIdx, length) =>
-        writeTypeIdx(buf, typeIdx)
+        writeTypeIdx(typeIdx)
         buf.u32(length)
 
       case ArrayCopy(destType, srcType) =>
-        writeTypeIdx(buf, destType)
-        writeTypeIdx(buf, srcType)
+        writeTypeIdx(destType)
+        writeTypeIdx(srcType)
 
       case BrOnCast(labelIdx, from, to) =>
         writeBrOnCast(labelIdx, from, to)
@@ -470,11 +472,11 @@ class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
     }
   }
 
-  private def writeBlockType(buf: Buffer, blockType: BlockType): Unit = {
+  private def writeBlockType(blockType: BlockType): Unit = {
     blockType match {
       case BlockType.ValueType(None)      => buf.byte(0x40)
-      case BlockType.ValueType(Some(tpe)) => writeType(buf, tpe)
-      case BlockType.FunctionType(typeID) => writeTypeIdxs33(buf, typeID)
+      case BlockType.ValueType(Some(tpe)) => writeType(tpe)
+      case BlockType.FunctionType(typeID) => writeTypeIdxs33(typeID)
     }
   }
 }
@@ -495,7 +497,15 @@ object BinaryWriter {
   private final val SectionDataCount = 0x0C
   private final val SectionTag = 0x0D
 
-  private final class Buffer {
+  def write(module: Module, emitDebugInfo: Boolean): Array[Byte] =
+    new BinaryWriter(module, emitDebugInfo).write()
+
+  def writeWithSourceMap(module: Module, emitDebugInfo: Boolean,
+      sourceMapWriter: SourceMapWriter, sourceMapURI: String): Array[Byte] = {
+    new WithSourceMap(module, emitDebugInfo, sourceMapWriter, sourceMapURI).write()
+  }
+
+  private[BinaryWriter] final class Buffer {
     private var buf: Array[Byte] = new Array[Byte](1024 * 1024)
     private var size: Int = 0
 
@@ -584,14 +594,14 @@ object BinaryWriter {
       }
     }
 
-    def byteLengthSubSection(f: Buffer => Unit): Unit = {
+    def byteLengthSubSection(subSectionContent: => Unit): Unit = {
       // Reserve 4 bytes at the current offset to store the byteLength later
       val byteLengthOffset = size
       val startOffset = byteLengthOffset + 4
       ensureCapacity(startOffset)
       size = startOffset // do not write the 4 bytes for now
 
-      f(this)
+      subSectionContent
 
       // Compute byteLength
       val endOffset = size
@@ -636,23 +646,23 @@ object BinaryWriter {
     }
   }
 
-  final class WithSourceMap(module: Module, emitDebugInfo: Boolean,
+  private final class WithSourceMap(module: Module, emitDebugInfo: Boolean,
       sourceMapWriter: SourceMapWriter, sourceMapURI: String)
       extends BinaryWriter(module, emitDebugInfo) {
 
-    override protected def emitStartFuncPosition(buf: Buffer, pos: Position): Unit =
+    override protected def emitStartFuncPosition(pos: Position): Unit =
       sourceMapWriter.startNode(buf.currentGlobalOffset, pos)
 
-    override protected def emitPosition(buf: Buffer, pos: Position): Unit = {
+    override protected def emitPosition(pos: Position): Unit = {
       sourceMapWriter.endNode(buf.currentGlobalOffset)
       sourceMapWriter.startNode(buf.currentGlobalOffset, pos)
     }
 
-    override protected def emitEndFuncPosition(buf: Buffer): Unit =
+    override protected def emitEndFuncPosition(): Unit =
       sourceMapWriter.endNode(buf.currentGlobalOffset)
 
-    override protected def emitSourceMapSection(buf: Buffer): Unit = {
-      writeCustomSection(buf, "sourceMappingURL") { buf =>
+    override protected def emitSourceMapSection(): Unit = {
+      writeCustomSection("sourceMappingURL") {
         buf.name(sourceMapURI)
       }
     }

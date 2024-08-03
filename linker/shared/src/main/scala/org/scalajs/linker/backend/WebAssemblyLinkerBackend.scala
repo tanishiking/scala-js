@@ -120,15 +120,15 @@ final class WebAssemblyLinkerBackend(config: LinkerBackendImpl.Config)
 
         val smWriter = new SourceMapWriter(sourceMapWriter, wasmFileURI,
             config.relativizeSourceMapBase, fragmentIndex)
-        val binaryOutput = new BinaryWriter.WithSourceMap(
-            wasmModule, emitDebugInfo, smWriter, sourceMapURI).write()
+        val binaryOutput = BinaryWriter.writeWithSourceMap(
+            wasmModule, emitDebugInfo, smWriter, sourceMapURI)
         smWriter.complete()
 
         outputImpl.writeFull(wasmFileName, ByteBuffer.wrap(binaryOutput)).flatMap { _ =>
           outputImpl.writeFull(sourceMapFileName, sourceMapWriter.toByteBuffer())
         }
       } else {
-        val binaryOutput = new BinaryWriter(wasmModule, emitDebugInfo).write()
+        val binaryOutput = BinaryWriter.write(wasmModule, emitDebugInfo)
         outputImpl.writeFull(wasmFileName, ByteBuffer.wrap(binaryOutput))
       }
     }
