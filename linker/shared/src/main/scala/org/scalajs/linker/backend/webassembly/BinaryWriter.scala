@@ -238,7 +238,7 @@ private sealed class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
   private def writeElementSection(): Unit = {
     buf.vec(module.elems) { element =>
       element.mode match {
-        case Element.Mode.Declarative => buf.byte(7)
+        case Element.Mode.Declarative => buf.u32(7)
       }
       writeType(element.tpe)
       buf.vec(element.init) { expr =>
@@ -250,7 +250,7 @@ private sealed class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
   private def writeDataSection(): Unit = {
     buf.vec(module.datas) { data =>
       data.mode match {
-        case Data.Mode.Passive => buf.byte(1)
+        case Data.Mode.Passive => buf.u32(1)
       }
       buf.vec(data.bytes)(buf.byte)
     }
@@ -444,11 +444,7 @@ private sealed class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
 
       case TryTable(blockType, clauses, _) =>
         writeBlockType(blockType)
-        buf.vec(clauses) { clause =>
-          buf.byte(clause.opcode.toByte)
-          clause.tag.foreach(tag => writeTagIdx(tag))
-          writeLabelIdx(clause.label)
-        }
+        buf.vec(clauses)(writeCatchClause(_))
 
       case ArrayNewData(typeIdx, dataIdx) =>
         writeTypeIdx(typeIdx)
@@ -470,6 +466,12 @@ private sealed class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
       case PositionMark(pos) =>
         throw new AssertionError(s"Unexpected $instr")
     }
+  }
+
+  private def writeCatchClause(clause: CatchClause): Unit = {
+    buf.byte(clause.opcode.toByte)
+    clause.tag.foreach(tag => writeTagIdx(tag))
+    writeLabelIdx(clause.label)
   }
 
   private def writeBlockType(blockType: BlockType): Unit = {
@@ -587,6 +589,7 @@ object BinaryWriter {
     def name(utf8: UTF8String): Unit = {
       val len = utf8.length
       u32(len)
+      ensureCapacity(size + len)
       var i = 0
       while (i != len) {
         byte(utf8(i))
@@ -607,13 +610,17 @@ object BinaryWriter {
       val endOffset = size
       val byteLength = endOffset - startOffset
 
-      assert(byteLength < (1 << 28), s"Cannot write a subsection that large: $byteLength")
+      /* Because we limited ourselves to 4 bytes, we cannot represent a size
+       * greater than 2^(4*7).
+       */
+      assert(byteLength < (1 << 28),
+          s"Implementation restriction: Cannot write a subsection that large: $byteLength")
 
       /* Write the byteLength in the reserved slot. Note that we *always* use
        * 4 bytes to store the byteLength, even when less bytes are necessary in
        * the unsigned LEB encoding. The WebAssembly spec specifically calls out
        * this choice as valid. We leverage it to have predictable total offsets
-       * when write the code section, which is important to efficiently
+       * when we write the code section, which is important to efficiently
        * generate source maps.
        */
       buf(byteLengthOffset) = ((byteLength & 0x7F) | 0x80).toByte
@@ -662,6 +669,7 @@ object BinaryWriter {
       sourceMapWriter.endNode(buf.currentGlobalOffset)
 
     override protected def emitSourceMapSection(): Unit = {
+      // See https://github.com/WebAssembly/tool-conventions/blob/main/Debugging.md#source-maps
       writeCustomSection("sourceMappingURL") {
         buf.name(sourceMapURI)
       }
