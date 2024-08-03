@@ -14,6 +14,8 @@ package org.scalajs.linker.backend.webassembly
 
 import scala.annotation.tailrec
 
+import java.nio.{ByteBuffer, ByteOrder}
+
 import org.scalajs.ir.{Position, UTF8String}
 import org.scalajs.linker.backend.javascript.SourceMapWriter
 
@@ -84,7 +86,7 @@ private sealed class BinaryWriter(module: Module, emitDebugInfo: Boolean) {
   protected def emitEndFuncPosition(): Unit = ()
   protected def emitSourceMapSection(): Unit = ()
 
-  def write(): Array[Byte] = {
+  def write(): ByteBuffer = {
     // magic header: null char + "asm"
     buf.byte(0)
     buf.byte('a')
@@ -499,42 +501,43 @@ object BinaryWriter {
   private final val SectionDataCount = 0x0C
   private final val SectionTag = 0x0D
 
-  def write(module: Module, emitDebugInfo: Boolean): Array[Byte] =
+  def write(module: Module, emitDebugInfo: Boolean): ByteBuffer =
     new BinaryWriter(module, emitDebugInfo).write()
 
   def writeWithSourceMap(module: Module, emitDebugInfo: Boolean,
-      sourceMapWriter: SourceMapWriter, sourceMapURI: String): Array[Byte] = {
+      sourceMapWriter: SourceMapWriter, sourceMapURI: String): ByteBuffer = {
     new WithSourceMap(module, emitDebugInfo, sourceMapWriter, sourceMapURI).write()
   }
 
   private[BinaryWriter] final class Buffer {
-    private var buf: Array[Byte] = new Array[Byte](1024 * 1024)
-    private var size: Int = 0
+    private var buf: ByteBuffer =
+      ByteBuffer.allocate(1024 * 1024).order(ByteOrder.LITTLE_ENDIAN)
 
-    private def ensureCapacity(capacity: Int): Unit = {
-      if (buf.length < capacity) {
-        val newCapacity = Integer.highestOneBit(capacity) << 1
-        buf = java.util.Arrays.copyOf(buf, newCapacity)
+    private def ensureRemaining(requiredRemaining: Int): Unit = {
+      if (buf.remaining() < requiredRemaining) {
+        buf.flip()
+        val newCapacity = Integer.highestOneBit(buf.capacity() + requiredRemaining) << 1
+        val newBuf = ByteBuffer.allocate(newCapacity).order(ByteOrder.LITTLE_ENDIAN)
+        newBuf.put(buf)
+        buf = newBuf
       }
     }
 
-    def currentGlobalOffset: Int = size
+    def currentGlobalOffset: Int = buf.position()
 
-    def result(): Array[Byte] =
-      java.util.Arrays.copyOf(buf, size)
+    def result(): ByteBuffer = {
+      buf.flip()
+      buf
+    }
 
     def byte(b: Byte): Unit = {
-      val newSize = size + 1
-      ensureCapacity(newSize)
-      buf(size) = b
-      size = newSize
+      ensureRemaining(1)
+      buf.put(b)
     }
 
     def rawByteArray(array: Array[Byte]): Unit = {
-      val newSize = size + array.length
-      ensureCapacity(newSize)
-      System.arraycopy(array, 0, buf, size, array.length)
-      size = newSize
+      ensureRemaining(array.length)
+      buf.put(array)
     }
 
     def boolean(b: Boolean): Unit =
@@ -555,23 +558,13 @@ object BinaryWriter {
     def i64(value: Long): Unit = s64(value)
 
     def f32(value: Float): Unit = {
-      val bits = java.lang.Float.floatToIntBits(value)
-      byte(bits.toByte)
-      byte((bits >>> 8).toByte)
-      byte((bits >>> 16).toByte)
-      byte((bits >>> 24).toByte)
+      ensureRemaining(4)
+      buf.putFloat(value)
     }
 
     def f64(value: Double): Unit = {
-      val bits = java.lang.Double.doubleToLongBits(value)
-      byte(bits.toByte)
-      byte((bits >>> 8).toByte)
-      byte((bits >>> 16).toByte)
-      byte((bits >>> 24).toByte)
-      byte((bits >>> 32).toByte)
-      byte((bits >>> 40).toByte)
-      byte((bits >>> 48).toByte)
-      byte((bits >>> 56).toByte)
+      ensureRemaining(8)
+      buf.putDouble(value)
     }
 
     def vec[A](elems: Iterable[A])(op: A => Unit): Unit = {
@@ -589,25 +582,21 @@ object BinaryWriter {
     def name(utf8: UTF8String): Unit = {
       val len = utf8.length
       u32(len)
-      ensureCapacity(size + len)
-      var i = 0
-      while (i != len) {
-        byte(utf8(i))
-        i += 1
-      }
+      ensureRemaining(len)
+      utf8.writeTo(buf)
     }
 
     def byteLengthSubSection(subSectionContent: => Unit): Unit = {
       // Reserve 4 bytes at the current offset to store the byteLength later
-      val byteLengthOffset = size
-      val startOffset = byteLengthOffset + 4
-      ensureCapacity(startOffset)
-      size = startOffset // do not write the 4 bytes for now
+      val byteLengthOffset = buf.position()
+      ensureRemaining(4)
+      val startOffset = buf.position() + 4
+      buf.position(startOffset) // do not write the 4 bytes for now
 
       subSectionContent
 
       // Compute byteLength
-      val endOffset = size
+      val endOffset = buf.position()
       val byteLength = endOffset - startOffset
 
       /* Because we limited ourselves to 4 bytes, we cannot represent a size
@@ -623,10 +612,10 @@ object BinaryWriter {
        * when we write the code section, which is important to efficiently
        * generate source maps.
        */
-      buf(byteLengthOffset) = ((byteLength & 0x7F) | 0x80).toByte
-      buf(byteLengthOffset + 1) = (((byteLength >>> 7) & 0x7F) | 0x80).toByte
-      buf(byteLengthOffset + 2) = (((byteLength >>> 14) & 0x7F) | 0x80).toByte
-      buf(byteLengthOffset + 3) = ((byteLength >>> 21) & 0x7F).toByte
+      buf.put(byteLengthOffset, ((byteLength & 0x7F) | 0x80).toByte)
+      buf.put(byteLengthOffset + 1, (((byteLength >>> 7) & 0x7F) | 0x80).toByte)
+      buf.put(byteLengthOffset + 2, (((byteLength >>> 14) & 0x7F) | 0x80).toByte)
+      buf.put(byteLengthOffset + 3, ((byteLength >>> 21) & 0x7F).toByte)
     }
 
     @tailrec

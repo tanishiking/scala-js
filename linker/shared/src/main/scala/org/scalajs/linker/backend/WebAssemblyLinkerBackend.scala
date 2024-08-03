@@ -124,12 +124,12 @@ final class WebAssemblyLinkerBackend(config: LinkerBackendImpl.Config)
             wasmModule, emitDebugInfo, smWriter, sourceMapURI)
         smWriter.complete()
 
-        outputImpl.writeFull(wasmFileName, ByteBuffer.wrap(binaryOutput)).flatMap { _ =>
+        outputImpl.writeFull(wasmFileName, binaryOutput).flatMap { _ =>
           outputImpl.writeFull(sourceMapFileName, sourceMapWriter.toByteBuffer())
         }
       } else {
         val binaryOutput = BinaryWriter.write(wasmModule, emitDebugInfo)
-        outputImpl.writeFull(wasmFileName, ByteBuffer.wrap(binaryOutput))
+        outputImpl.writeFull(wasmFileName, binaryOutput)
       }
     }
 
