@@ -28,6 +28,8 @@ object Preprocessor {
   def preprocess(classes: List[LinkedClass], tles: List[LinkedTopLevelExport]): WasmContext = {
     val staticFieldMirrors = computeStaticFieldMirrors(tles)
 
+    val specialInstanceTypes = computeSpecialInstanceTypes(classes)
+
     val abstractMethodCalls =
       AbstractMethodCallCollector.collectAbstractMethodCalls(classes, tles)
 
@@ -41,6 +43,7 @@ object Preprocessor {
       val classInfo = preprocess(
         clazz,
         staticFieldMirrors.getOrElse(clazz.className, Map.empty),
+        specialInstanceTypes.getOrElse(clazz.className, 0),
         itableBucketAssignments.getOrElse(clazz.className, -1),
         classInfosBuilder
       )
@@ -67,8 +70,8 @@ object Preprocessor {
   }
 
   private def computeStaticFieldMirrors(
-      tles: List[LinkedTopLevelExport]
-  ): Map[ClassName, Map[FieldName, List[String]]] = {
+      tles: List[LinkedTopLevelExport]): Map[ClassName, Map[FieldName, List[String]]] = {
+
     var result = Map.empty[ClassName, Map[FieldName, List[String]]]
     for (tle <- tles) {
       tle.tree match {
@@ -85,9 +88,36 @@ object Preprocessor {
     result
   }
 
+  private def computeSpecialInstanceTypes(
+      classes: List[LinkedClass]): Map[ClassName, Int] = {
+
+    val result = mutable.AnyRefMap.empty[ClassName, Int]
+
+    for {
+      clazz <- classes
+      if clazz.kind == ClassKind.HijackedClass
+    } {
+      val specialInstanceTypes = clazz.className match {
+        case BoxedBooleanClass => (1 << JSValueTypeFalse) | (1 << JSValueTypeTrue)
+        case BoxedStringClass  => 1 << JSValueTypeString
+        case BoxedDoubleClass  => 1 << JSValueTypeNumber
+        case BoxedUnitClass    => 1 << JSValueTypeUndefined
+        case _                 => 0
+      }
+
+      if (specialInstanceTypes != 0) {
+        for (ancestor <- clazz.ancestors.tail)
+          result(ancestor) = result.getOrElse(ancestor, 0) | specialInstanceTypes
+      }
+    }
+
+    result.toMap
+  }
+
   private def preprocess(
       clazz: LinkedClass,
       staticFieldMirrors: Map[FieldName, List[String]],
+      specialInstanceTypes: Int,
       itableIdx: Int,
       previousClassInfos: collection.Map[ClassName, ClassInfo]
   ): ClassInfo = {
@@ -169,47 +199,24 @@ object Preprocessor {
       }
     }
 
-    val classInfo = {
-      new ClassInfo(
-        className,
-        kind,
-        clazz.jsClassCaptures,
-        classConcretePublicMethodNames,
-        allFieldDefs,
-        superClass,
-        classImplementsAnyInterface,
-        clazz.hasInstances,
-        !clazz.hasDirectInstances,
-        hasRuntimeTypeInfo,
-        clazz.jsNativeLoadSpec,
-        clazz.jsNativeMembers.map(m => m.name.name -> m.jsNativeLoadSpec).toMap,
-        staticFieldMirrors,
-        resolvedMethodInfos,
-        itableIdx
-      )
-    }
-
-    // Update specialInstanceTypes for ancestors of hijacked classes
-    if (clazz.kind == ClassKind.HijackedClass) {
-      def addSpecialInstanceTypeOnAllAncestors(jsValueType: Int): Unit =
-        strictClassAncestors.foreach(previousClassInfos(_).addSpecialInstanceType(jsValueType))
-
-      clazz.className match {
-        case BoxedBooleanClass =>
-          addSpecialInstanceTypeOnAllAncestors(JSValueTypeFalse)
-          addSpecialInstanceTypeOnAllAncestors(JSValueTypeTrue)
-        case BoxedStringClass =>
-          addSpecialInstanceTypeOnAllAncestors(JSValueTypeString)
-        case BoxedDoubleClass =>
-          addSpecialInstanceTypeOnAllAncestors(JSValueTypeNumber)
-        case BoxedUnitClass =>
-          addSpecialInstanceTypeOnAllAncestors(JSValueTypeUndefined)
-        case _ =>
-          ()
-      }
-    }
-
-    classInfo
+    new ClassInfo(
+      className,
+      kind,
+      clazz.jsClassCaptures,
+      classConcretePublicMethodNames,
+      allFieldDefs,
+      superClass,
+      classImplementsAnyInterface,
+      clazz.hasInstances,
+      !clazz.hasDirectInstances,
+      hasRuntimeTypeInfo,
+      clazz.jsNativeLoadSpec,
+      clazz.jsNativeMembers.map(m => m.name.name -> m.jsNativeLoadSpec).toMap,
+      staticFieldMirrors,
+      specialInstanceTypes,
+      resolvedMethodInfos,
+      itableIdx
+    )
   }
 
   /** Collects virtual and interface method calls.

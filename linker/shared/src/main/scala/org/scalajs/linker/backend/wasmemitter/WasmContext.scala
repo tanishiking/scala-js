@@ -178,6 +178,7 @@ object WasmContext {
       val jsNativeLoadSpec: Option[JSNativeLoadSpec],
       val jsNativeMembers: Map[MethodName, JSNativeLoadSpec],
       val staticFieldMirrors: Map[FieldName, List[String]],
+      _specialInstanceTypes: Int,
       val resolvedMethodInfos: Map[MethodName, ConcreteMethodInfo],
       _itableIdx: Int
   ) {
@@ -207,11 +208,6 @@ object WasmContext {
       _itableIdx
     }
 
-    private var _specialInstanceTypes: Int = 0
-
-    def addSpecialInstanceType(jsValueType: Int): Unit =
-      _specialInstanceTypes |= (1 << jsValueType)
-
     /** A bitset of the `jsValueType`s corresponding to hijacked classes that extend this class.
      *
      *  This value is used for instance tests against this class. A JS value `x` is an instance of
@@ -240,7 +236,7 @@ object WasmContext {
      *  since `jsValueType(x) == JSValueTypeNumber` is not enough to deduce that
      *  `x.isInstanceOf[Int]`, for example.
      */
-    def specialInstanceTypes: Int = _specialInstanceTypes
+    val specialInstanceTypes: Int = _specialInstanceTypes
 
     /** Is this class an ancestor of any hijacked class?
      *
