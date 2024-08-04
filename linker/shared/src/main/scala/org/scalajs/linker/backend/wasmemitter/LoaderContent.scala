@@ -72,7 +72,7 @@ function superSelectSet(superClass, self, propName, value) {
 
 function installJSField(instance, name, value) {
   Object.defineProperty(instance, name, {
-    value: value,
+    value,
     configurable: true,
     enumerable: true,
     writable: true,
@@ -172,7 +172,7 @@ const scalaJSHelpers = {
   },
 
   // Identity hash code
-  bigintHashCode: bigintHashCode,
+  bigintHashCode,
   symbolDescription: (x) => {
     var desc = x.description;
     return (desc === void 0) ? null : desc;
@@ -259,7 +259,7 @@ const scalaJSHelpers = {
       }
     };
   },
-  installJSField: installJSField,
+  installJSField,
   installJSMethod: (data, jsClass, name, func, fixedArgCount) => {
     var closure = fixedArgCount < 0
       ? (function(...args) { return func(data, this, ...args); })
