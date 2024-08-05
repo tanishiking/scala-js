@@ -460,11 +460,11 @@ class ClassEmitter(coreSpec: CoreSpec) {
     } else {
       val itables = fb.addLocal("itables", watpe.RefType.nullable(genTypeID.itables))
 
-      fb.block(watpe.RefType.anyref) { testFail =>
+      fb.block(watpe.RefType.anyref) { labelNotOurObject =>
         // if expr is not an instance of Object, return false
         fb += wa.LocalGet(exprParam)
         fb += wa.BrOnCastFail(
-          testFail,
+          labelNotOurObject,
           watpe.RefType.anyref,
           watpe.RefType(genTypeID.ObjectStruct)
         )
@@ -473,19 +473,20 @@ class ClassEmitter(coreSpec: CoreSpec) {
         fb += wa.StructGet(genTypeID.ObjectStruct, genFieldID.objStruct.itables)
         fb += wa.LocalSet(itables)
 
-        // Dummy return value from the block
-        fb += wa.RefNull(watpe.HeapType.Any)
-
         // if the itables is null (no interfaces are implemented)
         fb += wa.LocalGet(itables)
-        fb += wa.BrOnNull(testFail)
+        fb += wa.RefIsNull
+        fb.ifThen() {
+          fb += wa.I32Const(0) // false
+          fb += wa.Return
+        }
 
         fb += wa.LocalGet(itables)
         fb += wa.I32Const(classInfo.itableIdx)
         fb += wa.ArrayGet(genTypeID.itables)
         fb += wa.RefTest(watpe.RefType(genTypeID.forITable(className)))
         fb += wa.Return
-      } // test fail
+      } // labelNotOurObject
 
       if (classInfo.isAncestorOfHijackedClass) {
         /* It could be a hijacked class instance that implements this interface.
