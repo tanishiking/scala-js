@@ -124,7 +124,7 @@ object Preprocessor {
     val className = clazz.className
     val kind = clazz.kind
 
-    val allFieldDefs: List[FieldDef] =
+    val allFieldDefs: List[FieldDef] = {
       if (kind.isClass) {
         val inheritedFields =
           superClass.fold[List[FieldDef]](Nil)(_.allFieldDefs)
@@ -135,18 +135,6 @@ object Preprocessor {
             throw new AssertionError(s"Illegal $fd in Scala class $className")
         }
         inheritedFields ::: myFieldDefs
-      } else {
-        Nil
-      }
-
-    val classConcretePublicMethodNames = {
-      if (kind.isClass || kind == ClassKind.HijackedClass) {
-        for {
-          m <- clazz.methods
-          if m.body.isDefined && m.flags.namespace == MemberNamespace.Public
-        } yield {
-          m.methodName
-        }
       } else {
         Nil
       }
@@ -184,10 +172,17 @@ object Preprocessor {
         val inherited =
           superClass.fold[Map[MethodName, ConcreteMethodInfo]](Map.empty)(_.resolvedMethodInfos)
 
-        for (methodName <- classConcretePublicMethodNames)
+        val concretePublicMethodNames = for {
+          m <- clazz.methods
+          if m.body.isDefined && m.flags.namespace == MemberNamespace.Public
+        } yield {
+          m.methodName
+        }
+
+        for (methodName <- concretePublicMethodNames)
           inherited.get(methodName).foreach(_.markOverridden())
 
-        classConcretePublicMethodNames.foldLeft(inherited) { (prev, methodName) =>
+        concretePublicMethodNames.foldLeft(inherited) { (prev, methodName) =>
           prev.updated(methodName, new ConcreteMethodInfo(className, methodName))
         }
       } else {
@@ -199,7 +194,6 @@ object Preprocessor {
       className,
       kind,
       clazz.jsClassCaptures,
-      classConcretePublicMethodNames,
       allFieldDefs,
       superClass,
       classImplementsAnyInterface,

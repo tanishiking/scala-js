@@ -168,7 +168,6 @@ object WasmContext {
       val name: ClassName,
       val kind: ClassKind,
       val jsClassCaptures: Option[List[ParamDef]],
-      classConcretePublicMethodNames: List[MethodName],
       val allFieldDefs: List[FieldDef],
       superClass: Option[ClassInfo],
       val classImplementsAnyInterface: Boolean,
