@@ -975,7 +975,7 @@ private class FunctionEmitter private (
               fb += wa.Call(genFunctionID.identityHashCode)
             case `equalsMethodName` =>
               if (typeTransformer.useWasmString) {
-                fb += wa.Call(genFunctionID.stringEquals)
+                fb += wa.Call(genFunctionID.equals)
               } else {
                 fb += wa.Call(genFunctionID.is)
               }
@@ -1438,7 +1438,7 @@ private class FunctionEmitter private (
     markPosition(tree)
 
     if (typeTransformer.useWasmString) {
-      fb += wa.Call(genFunctionID.stringEquals)
+      fb += wa.Call(genFunctionID.equals)
     } else {
       fb += wa.Call(genFunctionID.is)
     }
@@ -2970,7 +2970,7 @@ private class FunctionEmitter private (
             case StringLiteral(value) =>
               fb ++= ctx.stringPool.getConstantStringInstr(value)
               if (typeTransformer.useWasmString) {
-                fb += wa.Call(genFunctionID.stringEquals)
+                fb += wa.Call(genFunctionID.equals)
               } else {
                 fb += wa.Call(genFunctionID.is)
               }

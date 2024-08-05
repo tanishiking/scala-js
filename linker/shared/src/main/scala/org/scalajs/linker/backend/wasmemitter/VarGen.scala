@@ -159,7 +159,7 @@ object VarGen {
     case object createJSStringFromArrayNullable extends FunctionID
     case object nonNullString extends FunctionID
     case object arrayEquals extends FunctionID
-    case object stringEquals extends FunctionID
+    case object equals extends FunctionID
 
     // JS helpers
 

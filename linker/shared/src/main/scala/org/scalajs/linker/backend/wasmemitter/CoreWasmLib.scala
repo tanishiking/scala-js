@@ -2385,7 +2385,7 @@ object CoreWasmLib {
   }
 
   private def genStringEquals()(implicit ctx: WasmContext): Unit = {
-    val fb = newFunctionBuilder(genFunctionID.stringEquals)
+    val fb = newFunctionBuilder(genFunctionID.equals)
     val str1Param = fb.addParam("str1", RefType.anyref)
     val str2Param = fb.addParam("str2", RefType.anyref)
     fb.setResultType(Int32)
