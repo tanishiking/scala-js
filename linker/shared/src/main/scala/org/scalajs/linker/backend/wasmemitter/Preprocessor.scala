@@ -45,7 +45,7 @@ object Preprocessor {
         staticFieldMirrors.getOrElse(clazz.className, Map.empty),
         specialInstanceTypes.getOrElse(clazz.className, 0),
         itableBucketAssignments.getOrElse(clazz.className, -1),
-        classInfosBuilder
+        clazz.superClass.map(sup => classInfosBuilder(sup.name))
       )
       classInfosBuilder += clazz.className -> classInfo
 
@@ -119,17 +119,15 @@ object Preprocessor {
       staticFieldMirrors: Map[FieldName, List[String]],
       specialInstanceTypes: Int,
       itableIdx: Int,
-      previousClassInfos: collection.Map[ClassName, ClassInfo]
+      superClass: Option[ClassInfo]
   ): ClassInfo = {
     val className = clazz.className
     val kind = clazz.kind
 
     val allFieldDefs: List[FieldDef] =
       if (kind.isClass) {
-        val inheritedFields = clazz.superClass match {
-          case None      => Nil
-          case Some(sup) => previousClassInfos(sup.name).allFieldDefs
-        }
+        val inheritedFields =
+          superClass.fold[List[FieldDef]](Nil)(_.allFieldDefs)
         val myFieldDefs = clazz.fields.collect {
           case fd: FieldDef if !fd.flags.namespace.isStatic =>
             fd
@@ -154,15 +152,15 @@ object Preprocessor {
       }
     }
 
-    val superClass = clazz.superClass.map(sup => previousClassInfos(sup.name))
-
-    val strictClassAncestors =
-      if (kind.isClass || kind == ClassKind.HijackedClass) clazz.ancestors.tail
-      else Nil
-
     // Does this Scala class implement any interface?
-    val classImplementsAnyInterface =
-      strictClassAncestors.exists(a => previousClassInfos(a).isInterface)
+    val classImplementsAnyInterface = {
+      if (kind.isClass || kind == ClassKind.HijackedClass) {
+        clazz.interfaces.nonEmpty ||
+        superClass.exists(_.classImplementsAnyInterface)
+      } else {
+        false
+      }
+    }
 
     /* Should we emit a vtable/typeData global for this class?
      *
@@ -183,10 +181,8 @@ object Preprocessor {
 
     val resolvedMethodInfos: Map[MethodName, ConcreteMethodInfo] = {
       if (kind.isClass || kind == ClassKind.HijackedClass) {
-        val inherited: Map[MethodName, ConcreteMethodInfo] = superClass match {
-          case Some(superClass) => superClass.resolvedMethodInfos
-          case None             => Map.empty
-        }
+        val inherited =
+          superClass.fold[Map[MethodName, ConcreteMethodInfo]](Map.empty)(_.resolvedMethodInfos)
 
         for (methodName <- classConcretePublicMethodNames)
           inherited.get(methodName).foreach(_.markOverridden())
