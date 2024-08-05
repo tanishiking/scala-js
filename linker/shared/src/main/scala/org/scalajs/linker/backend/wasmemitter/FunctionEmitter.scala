@@ -1994,6 +1994,16 @@ private class FunctionEmitter private (
       val sourceWasmType = typeTransformer.transformType(sourceTpe)
       val targetWasmType = typeTransformer.transformType(targetTpe)
 
+      val isDownCastAnyToString: Boolean =
+        (sourceWasmType, targetWasmType) match {
+          case (watpe.RefType(_, sourceHeapType), watpe.RefType(_, targetHeapType))
+              if sourceHeapType == watpe.HeapType.Any &&
+                 targetHeapType == watpe.HeapType(genTypeID.i16Array) =>
+            true
+          case _ => false
+        }
+
+
       if (sourceWasmType == targetWasmType) {
         /* Common case where no cast is necessary at the Wasm level.
          * Note that this is not *obviously* correct. It is only correct
@@ -2002,8 +2012,26 @@ private class FunctionEmitter private (
          * types are equal but a valid cast would require a *conversion*.
          */
         genTreeAuto(expr)
+      } else if (isDownCastAnyToString && typeTransformer.useWasmString) {
+        fb.block(targetWasmType) { foo =>
+          genTreeAuto(expr)
+          // In case the receiver value is already an i16Array
+          fb += wa.BrOnCast(
+            foo,
+            watpe.RefType.anyref,
+            watpe.RefType.nullable(genTypeID.i16Array)
+          )
+          fb += wa.Call(genFunctionID.createArrayFromJSStringNullable)
+          // else fb += wa.Call(genFunctionID.createArrayFromJSString)
+        }
+        fb += wa.RefCast(watpe.RefType.nullable(genTypeID.i16Array))
+
       } else {
-        genTree(expr, AnyType)
+        // if the sourceTpe is String, `genTree(expr, AnyType)` will
+        // convert Wasm String into JS string
+        // which makes ref.cast to be illegal cast
+        if (isStringType(sourceTpe) && typeTransformer.useWasmString) genTreeAuto(expr)
+        else genTree(expr, AnyType)
 
         markPosition(tree)
 
@@ -2014,28 +2042,6 @@ private class FunctionEmitter private (
 
           case _ =>
             targetWasmType match {
-
-              // when the surrownding class uses i16Array for String representation
-              // downcast (ref null? any) -> (ref null? (array mut i16))
-              // might requires a translation from JS String -> i16Array String
-              case targetWasmType @ watpe.RefType(_, heapType) if
-                  typeTransformer.useWasmString &&
-                  heapType == watpe.HeapType(genTypeID.i16Array) =>
-                sourceWasmType match {
-                  case sourceWasmType: watpe.RefType =>
-                    val from = addSyntheticLocal(watpe.RefType.anyref)
-                    fb += wa.LocalSet(from)
-                    fb.block(targetWasmType) { foo =>
-                      fb += wa.LocalGet(from)
-                      // In case the receiver value is already an i16Array
-                      fb += wa.BrOnCast(foo, watpe.RefType.anyref, targetWasmType)
-                      if (sourceWasmType.nullable) fb += wa.Call(genFunctionID.createArrayFromJSStringNullable)
-                      else fb += wa.Call(genFunctionID.createArrayFromJSString)
-                    }
-                  case _ =>
-                    ()
-                }
-
               case watpe.RefType(true, watpe.HeapType.Any) =>
                 () // nothing to do
               case targetWasmType: watpe.RefType =>
