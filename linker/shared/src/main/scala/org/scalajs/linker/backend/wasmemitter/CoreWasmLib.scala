@@ -1631,26 +1631,20 @@ object CoreWasmLib {
     fb.setResultType(RefType(genTypeID.ObjectStruct))
 
     val componentTypeDataLocal = fb.addLocal("componentTypeData", RefType(genTypeID.typeData))
+    val vtableLocal = fb.addLocal("vtable", arrayTypeDataType)
 
     // componentTypeData := jlClass.data
     fb += LocalGet(jlClassParam)
     fb += StructGet(genTypeID.ClassStruct, genFieldID.classData)
     fb += LocalTee(componentTypeDataLocal)
 
-    // Load the vtable and itables of the ArrayClass instance we will create
+    // Compute the vtable of the ArrayClass instance we will create
     fb += I32Const(1)
     fb += Call(genFunctionID.arrayTypeData) // vtable
-    fb += GlobalGet(genGlobalID.arrayClassITable) // itables
-
-    // Load the length
-    fb += LocalGet(lengthParam)
+    fb += LocalSet(vtableLocal)
 
     // switch (componentTypeData.kind)
-    val switchClauseSig = FunctionType(
-      List(arrayTypeDataType, RefType(genTypeID.itables), Int32),
-      List(RefType(genTypeID.ObjectStruct))
-    )
-    fb.switch(switchClauseSig) { () =>
+    fb.switch(RefType(genTypeID.ObjectStruct)) { () =>
       // scrutinee
       fb += LocalGet(componentTypeDataLocal)
       fb += StructGet(genTypeID.typeData, genFieldID.typeData.kind)
@@ -1658,6 +1652,10 @@ object CoreWasmLib {
       // case KindPrim => array.new_default underlyingPrimArray; struct.new PrimArray
       primRefsWithArrayTypes.map { case (primRef, kind) =>
         List(kind) -> { () =>
+          fb += LocalGet(vtableLocal)
+          fb += GlobalGet(genGlobalID.arrayClassITable) // itables
+          fb += LocalGet(lengthParam)
+
           val arrayTypeRef = ArrayTypeRef(primRef, 1)
           fb += ArrayNewDefault(genTypeID.underlyingOf(arrayTypeRef))
           fb += StructNew(genTypeID.forArrayClass(arrayTypeRef))
@@ -1666,6 +1664,10 @@ object CoreWasmLib {
       }: _*
     ) { () =>
       // case _ => array.new_default anyrefArray; struct.new ObjectArray
+      fb += LocalGet(vtableLocal)
+      fb += GlobalGet(genGlobalID.arrayClassITable) // itables
+      fb += LocalGet(lengthParam)
+
       val arrayTypeRef = ArrayTypeRef(ClassRef(ObjectClass), 1)
       fb += ArrayNewDefault(genTypeID.underlyingOf(arrayTypeRef))
       fb += StructNew(genTypeID.forArrayClass(arrayTypeRef))
@@ -1927,22 +1929,15 @@ object CoreWasmLib {
      * }
      */
 
-    // Load the vtable and itable of the resulting array on the stack
-    fb += LocalGet(arrayTypeDataParam) // vtable
-    fb += GlobalGet(genGlobalID.arrayClassITable) // itable
-
     // Load the first length
     fb += LocalGet(lengthsParam)
     fb += LocalGet(lengthIndexParam)
     fb += ArrayGet(genTypeID.i32Array)
+    fb += LocalSet(lenLocal)
 
     // componentTypeData := ref_as_non_null(arrayTypeData.componentType)
     // switch (componentTypeData.kind)
-    val switchClauseSig = FunctionType(
-      List(arrayTypeDataType, itablesType, Int32),
-      List(nonNullObjectType)
-    )
-    fb.switch(switchClauseSig) { () =>
+    fb.switch(nonNullObjectType) { () =>
       // scrutinee
       fb += LocalGet(arrayTypeDataParam)
       fb += StructGet(genTypeID.typeData, genFieldID.typeData.componentType)
@@ -1952,6 +1947,11 @@ object CoreWasmLib {
       // case KindPrim => array.new_default underlyingPrimArray; struct.new PrimArray
       primRefsWithArrayTypes.map { case (primRef, kind) =>
         List(kind) -> { () =>
+          // Load the vtable and itable of the resulting array on the stack
+          fb += LocalGet(arrayTypeDataParam) // vtable
+          fb += GlobalGet(genGlobalID.arrayClassITable) // itable
+          fb += LocalGet(lenLocal)
+
           val arrayTypeRef = ArrayTypeRef(primRef, 1)
           fb += ArrayNewDefault(genTypeID.underlyingOf(arrayTypeRef))
           fb += StructNew(genTypeID.forArrayClass(arrayTypeRef))
@@ -1961,8 +1961,10 @@ object CoreWasmLib {
     ) { () =>
       // default -- all non-primitive array types
 
-      // len := <top-of-stack> (which is the first length)
-      fb += LocalTee(lenLocal)
+      // Load the vtable and itable of the resulting array on the stack
+      fb += LocalGet(arrayTypeDataParam) // vtable
+      fb += GlobalGet(genGlobalID.arrayClassITable) // itable
+      fb += LocalGet(lenLocal)
 
       // underlying := array.new_default anyArray
       val arrayTypeRef = ArrayTypeRef(ClassRef(ObjectClass), 1)
