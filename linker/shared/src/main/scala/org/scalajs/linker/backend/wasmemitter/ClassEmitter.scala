@@ -701,7 +701,7 @@ class ClassEmitter(coreSpec: CoreSpec) {
               genGlobalID.forJSPrivateField(name.name),
               makeDebugName(ns.PrivateJSField, name.name),
               isMutable = true,
-              watpe.RefType.anyref,
+              watpe.RefType.anyref, // keep field type anyref even for String
               wa.Expr(List(wa.RefNull(watpe.HeapType.Any)))
             )
           )
