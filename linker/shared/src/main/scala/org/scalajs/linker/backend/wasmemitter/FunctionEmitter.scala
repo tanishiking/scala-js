@@ -1690,6 +1690,7 @@ private class FunctionEmitter private (
     val ctorName = MethodName.constructor(List(ClassRef(BoxedStringClass)))
     genNewScalaClass(ArithmeticExceptionClass, ctorName) {
       fb ++= ctx.stringPool.getConstantStringInstr("/ by zero")
+      fb += wa.Call(genFunctionID.createArrayFromJSString)
     }
     fb += wa.ExternConvertAny
     fb += wa.Throw(genTagID.exception)
