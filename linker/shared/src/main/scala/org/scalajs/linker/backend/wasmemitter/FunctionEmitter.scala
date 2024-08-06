@@ -742,14 +742,19 @@ private class FunctionEmitter private (
        * The overall structure of the generated code is as follows:
        *
        * block resultType $done
-       *   block (ref any) $notOurObject
-       *     load non-null receiver and args and store into locals
-       *     reload copy of receiver
-       *     br_on_cast_fail (ref any) (ref $targetRealClass) $notOurObject
-       *     reload args
-       *     generate standard table-based dispatch
+       *   block (ref any) $notArray
+       *     block (ref any) $notOurObject
+       *       load non-null receiver and args and store into locals
+       *       reload copy of receiver
+       *       br_on_cast_fail (ref any) (ref $targetRealClass) $notOurObject
+       *       reload args
+       *       generate standard table-based dispatch
+       *       br $done
+       *     end $notOurObject
+       *     br_on_cast_fail (ref any) (ref $i16Array) $notArray
+       *     choose an implementation of a single hijacked String class
        *     br $done
-       *   end $notOurObject
+       *   end $notArray
        *   choose an implementation of a single hijacked class, or a JS helper
        *   reload args
        *   call the chosen implementation
@@ -771,49 +776,60 @@ private class FunctionEmitter private (
          * For the case with the args, it does not hurt either way. We could
          * move it out, but that would make for a less consistent codegen.
          */
-        val argsLocals = fb.block(watpe.RefType.any) { labelNotOurObject =>
-          // Load receiver and arguments and store them in temporary variables
-          genReceiverNotNull()
-          val argsLocals = if (args.isEmpty) {
-            /* When there are no arguments, we can leave the receiver directly on
-             * the stack instead of going through a local. We will still need a
-             * local for the table-based dispatch, though.
-             */
-            Nil
-          } else {
-            /* When there are arguments, we need to store them in temporary
-             * variables. This is not required for correctness of the evaluation
-             * order. It is only necessary so that we do not duplicate the
-             * codegen of the arguments. If the arguments are complex, doing so
-             * could lead to exponential blow-up of the generated code.
-             */
-            val receiverLocal = addSyntheticLocal(watpe.RefType.any)
+        val argsLocals = fb.block(watpe.RefType.any) { labelNotArray =>
+          val argsLocals = fb.block(watpe.RefType.any) { labelNotOurObject =>
+            // Load receiver and arguments and store them in temporary variables
+            genReceiverNotNull()
+            val argsLocals = if (args.isEmpty) {
+              /* When there are no arguments, we can leave the receiver directly on
+               * the stack instead of going through a local. We will still need a
+               * local for the table-based dispatch, though.
+               */
+              Nil
+            } else {
+              /* When there are arguments, we need to store them in temporary
+               * variables. This is not required for correctness of the evaluation
+               * order. It is only necessary so that we do not duplicate the
+               * codegen of the arguments. If the arguments are complex, doing so
+               * could lead to exponential blow-up of the generated code.
+               */
+              val receiverLocal = addSyntheticLocal(watpe.RefType.any)
 
-            fb += wa.LocalSet(receiverLocal)
-            val argsLocals: List[wanme.LocalID] =
-              for ((arg, typeRef) <- args.zip(methodName.paramTypeRefs)) yield {
-                val tpe = ctx.inferTypeFromTypeRef(typeRef)
-                genTree(arg, tpe)
-                val localID = addSyntheticLocal(transformLocalType(tpe))
-                fb += wa.LocalSet(localID)
-                localID
-              }
-            fb += wa.LocalGet(receiverLocal)
+              fb += wa.LocalSet(receiverLocal)
+              val argsLocals: List[wanme.LocalID] =
+                for ((arg, typeRef) <- args.zip(methodName.paramTypeRefs)) yield {
+                  val tpe = ctx.inferTypeFromTypeRef(typeRef)
+                  genTree(arg, tpe)
+                  val localID = addSyntheticLocal(transformLocalType(tpe))
+                  fb += wa.LocalSet(localID)
+                  localID
+                }
+              fb += wa.LocalGet(receiverLocal)
+              argsLocals
+            }
+
+            markPosition(tree) // main position marker for the entire hijacked class dispatch branch
+
+            fb += wa.BrOnCastFail(labelNotOurObject, watpe.RefType.any, refTypeForDispatch)
+            fb += wa.LocalTee(receiverLocalForDispatch)
+            pushArgs(argsLocals)
+            genTableDispatch(receiverClassInfo, methodName, receiverLocalForDispatch)
+            fb += wa.Br(labelDone)
+
             argsLocals
-          }
+          } // end block labelNotOurObject
 
-          markPosition(tree) // main position marker for the entire hijacked class dispatch branch
-
-          fb += wa.BrOnCastFail(labelNotOurObject, watpe.RefType.any, refTypeForDispatch)
-          fb += wa.LocalTee(receiverLocalForDispatch)
+          // Now we have have a value that is not one of our objects,
+          // it must be either i16Array (for string representation) or a JavaScript value
+          fb += wa.BrOnCastFail(labelNotArray, watpe.RefType.any, watpe.RefType(genTypeID.i16Array))
           pushArgs(argsLocals)
-          genTableDispatch(receiverClassInfo, methodName, receiverLocalForDispatch)
+          genHijackedClassCall(BoxedStringClass)
           fb += wa.Br(labelDone)
 
           argsLocals
-        } // end block labelNotOurObject
+        }
 
-        /* Now we have a value that is not one of our objects, so it must be
+        /* Now we have a value that is not one of our objects or i16Array, so it must be
          * a JavaScript value whose representative class extends/implements the
          * receiver class. It may be a primitive instance of a hijacked class, or
          * any other value (whose representative class is therefore `jl.Object`).
@@ -829,6 +845,7 @@ private class FunctionEmitter private (
           // By spec, toString() is special
           assert(argsLocals.isEmpty)
           fb += wa.Call(genFunctionID.jsValueToString)
+          fb += wa.Call(genFunctionID.createArrayFromJSString)
         } else if (receiverClassName == JLNumberClass) {
           // the value must be a `number`, hence we can unbox to `double`
           genUnbox(DoubleType)
