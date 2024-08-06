@@ -2618,6 +2618,34 @@ private class FunctionEmitter private (
               case watpe.RefType.anyref =>
                 // nothing to do
                 ()
+              // If it is a StringType or ClassType(BoxedStringClass),
+              // ArraySelect would expect to return `ref (null)? i16Array`.
+              // However, the elements of Array[String] can be either i16Array or a JS string because:
+              // - When creating a new Array[String](...), the elements are upcast to Any(?),
+              //   and converted to JSString upon the creation of the Array.
+              // - Assigning to the Array doesn't upcast(?) and the elements remain as i16Array.
+              //   For example, `java.util.regex.Pattern.split` builds result array by
+              //   ```
+              //   val r = new Array[String](actualLength)
+              //   for (i <- 0 until actualLength)
+              //     r(i) = result(i) // it doesn't convert to js string
+              //   ```
+              //
+              // Therefore, when selecting a String from an Array, unify them to be i16Array.
+              case watpe.RefType(_, heapType) if heapType == watpe.HeapType(genTypeID.i16Array) =>
+                // TODO: should we handle nullable?
+                val local = addSyntheticLocal(watpe.RefType.anyref)
+                fb += wa.LocalSet(local)
+                fb.block(watpe.RefType.nullable(genTypeID.i16Array)) { labelDone =>
+                  fb += wa.LocalGet(local)
+                  fb += wa.BrOnCast(
+                    labelDone,
+                    watpe.RefType.anyref,
+                    watpe.RefType.nullable(genTypeID.i16Array)
+                  )
+                  fb += wa.Call(genFunctionID.createArrayFromJSStringNullable)
+                }
+
               case refType: watpe.RefType =>
                 fb += wa.RefCast(refType)
               case otherType =>
