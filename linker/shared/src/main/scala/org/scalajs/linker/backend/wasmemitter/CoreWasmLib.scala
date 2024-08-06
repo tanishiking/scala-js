@@ -1983,6 +1983,8 @@ object CoreWasmLib {
         },
         List(JSValueTypeString) -> { () =>
           fb += LocalGet(objNonNullLocal)
+          // BoxedStringClass methods expect receiver to be i16Array, convert from JS to i16 array
+          fb += Call(genFunctionID.createArrayFromJSString)
           fb += Call(
             genFunctionID.forMethod(Public, BoxedStringClass, hashCodeMethodName)
           )
@@ -2010,6 +2012,8 @@ object CoreWasmLib {
             fb += LocalGet(objNonNullLocal)
             fb += Call(genFunctionID.symbolDescription)
             fb += BrOnNull(descriptionIsNullLabel)
+            // BoxedStringClass methods expect receiver to be i16Array, convert from JS to i16 array
+            fb += Call(genFunctionID.createArrayFromJSString)
             fb += Call(
               genFunctionID.forMethod(Public, BoxedStringClass, hashCodeMethodName)
             )
