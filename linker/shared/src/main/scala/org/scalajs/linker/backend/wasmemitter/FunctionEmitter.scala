@@ -1201,7 +1201,7 @@ private class FunctionEmitter private (
 
       // String.length
       case String_length =>
-        fb += wa.Call(genFunctionID.stringLength)
+        fb += wa.ArrayLen
     }
 
     tree.tpe
@@ -1293,7 +1293,7 @@ private class FunctionEmitter private (
         genTree(lhs, StringType)
         genTree(rhs, IntType)
         markPosition(tree)
-        fb += wa.Call(genFunctionID.stringCharAt)
+        fb += wa.ArrayGetU(genTypeID.i16Array)
         CharType
 
       case _ =>
