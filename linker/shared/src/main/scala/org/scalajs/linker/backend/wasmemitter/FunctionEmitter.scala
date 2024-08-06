@@ -419,6 +419,13 @@ private class FunctionEmitter private (
         ()
       case (_, NoType) =>
         fb += wa.Drop
+      // When upcasting String / j.l.String to Any
+      // it might be passing String for JS interopration
+      // convert i16 array string into JS string.
+      case (StringType, AnyType) =>
+        fb += wa.Call(genFunctionID.createJSStringFromArray)
+      case (ClassType(BoxedStringClass), AnyType) =>
+        fb += wa.Call(genFunctionID.createJSStringFromArrayNullable)
       case (primType: PrimTypeWithRef, _) =>
         // box
         primType match {
@@ -1806,6 +1813,15 @@ private class FunctionEmitter private (
         markPosition(tree)
 
         targetTpe match {
+          // when downcast from Any to String, convert back to i16Array String from JSString
+          // what if the sourceTpe isn't `AnyType`? - It doesn't matter
+          // because we call `genTree(expr, AnyType)`, and it anyway be a JSString if it's String
+          case StringType =>
+            fb += wa.RefAsNonNull // is this needed?
+            fb += wa.Call(genFunctionID.createArrayFromJSString)
+          case ClassType(BoxedStringClass) =>
+            fb += wa.Call(genFunctionID.createArrayFromJSStringNullable)
+
           case targetTpe: PrimType =>
             // TODO Opt: We could do something better for things like double.asInstanceOf[int]
             genUnbox(targetTpe)
@@ -1840,6 +1856,10 @@ private class FunctionEmitter private (
 
       case StringType =>
         fb += wa.RefAsNonNull
+        // `genApplyStatically` runs `genTree(..., AnyType)`
+        // which convert i16Array String into JSString
+        // convert back to i16Array string
+        fb += wa.Call(genFunctionID.createArrayFromJSString)
 
       case CharType | LongType =>
         // Extract the `value` field (the only field) out of the box class.
