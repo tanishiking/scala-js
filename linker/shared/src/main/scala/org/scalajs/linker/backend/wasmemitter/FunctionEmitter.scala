@@ -1058,6 +1058,7 @@ private class FunctionEmitter private (
 
         case StringLiteral(v) =>
           fb ++= ctx.stringPool.getConstantStringInstr(v)
+          fb += wa.Call(genFunctionID.createArrayFromJSString)
 
         case ClassOf(typeRef) =>
           genLoadTypeData(fb, typeRef)
@@ -1372,13 +1373,13 @@ private class FunctionEmitter private (
         genToStringForConcat(lhs)
         genToStringForConcat(rhs)
         markPosition(tree)
-        fb += wa.Call(genFunctionID.stringConcat)
+        fb += wa.Call(genFunctionID.wasmStringConcat)
     }
 
     StringType
   }
 
-  private def genToStringForConcat(tree: Tree): Unit = {
+  private def genToStringForConcat(tree: Tree): Unit = { // returns i16Array
     def genWithDispatch(isAncestorOfHijackedClass: Boolean): Unit = {
       /* Somewhat duplicated from genApplyNonPrim, but specialized for
        * `toString`, and where the handling of `null` is different.
@@ -1399,7 +1400,7 @@ private class FunctionEmitter private (
          *
          * The overall structure of the generated code is as follows:
          *
-         * block (ref any) $done
+         * block (ref (array (mut i16))) $done
          *   block $isNull
          *     load receiver as (ref null java.lang.Object)
          *     br_on_null $isNull
@@ -1410,7 +1411,7 @@ private class FunctionEmitter private (
          * end $done
          */
 
-        fb.block(watpe.RefType.any) { labelDone =>
+        fb.block(watpe.RefType(genTypeID.i16Array)) { labelDone =>
           fb.block() { labelIsNull =>
             genTreeAuto(tree)
             markPosition(tree)
@@ -1421,45 +1422,63 @@ private class FunctionEmitter private (
           }
 
           fb ++= ctx.stringPool.getConstantStringInstr("null")
+          fb += wa.Call(genFunctionID.createArrayFromJSString)
         }
       } else {
         /* Dispatch where the receiver can be a JS value.
          *
          * The overall structure of the generated code is as follows:
          *
-         * block (ref any) $done
-         *   block anyref $notOurObject
-         *     load receiver
-         *     br_on_cast_fail anyref (ref $java.lang.Object) $notOurObject
-         *     generate standard table-based dispatch
+         * block (ref (array (mut i16)) $done
+         *   block (ref (array (mut i16)) $notArray
+         *     block anyref $notOurObject
+         *       load receiver
+         *       br_on_cast_fail anyref (ref $java.lang.Object) $notOurObject
+         *       generate standard table-based dispatch
+         *       br_on_non_null $done
+         *       ref.null any
+         *     end $notOurObject
+         *     ;; anyref is on stack
+         *     br_on_cast_fail anyref (ref null (array (mut i16))) $notArray
          *     br_on_non_null $done
          *     ref.null any
-         *   end $notOurObject
+         *   end $notArray
          *   call the JS helper, also handles `null`
          * end $done
          */
 
-        fb.block(watpe.RefType.any) { labelDone =>
-          // First try the case where the value is one of our objects
-          fb.block(watpe.RefType.anyref) { labelNotOurObject =>
-            // Load receiver
-            genTreeAuto(tree)
+        fb.block(watpe.RefType(genTypeID.i16Array)) { labelDone =>
+          fb.block(watpe.RefType.anyref) { labelNotArray =>
+            // First try the case where the value is one of our objects
+            fb.block(watpe.RefType.anyref) { labelNotOurObject =>
+              // Load receiver
+              genTreeAuto(tree)
 
-            markPosition(tree)
+              markPosition(tree)
 
+              fb += wa.BrOnCastFail(
+                labelNotOurObject,
+                watpe.RefType.anyref,
+                watpe.RefType(genTypeID.ObjectStruct)
+              )
+              fb += wa.LocalTee(receiverLocalForDispatch)
+              genTableDispatch(objectClassInfo, toStringMethodName, receiverLocalForDispatch)
+              fb += wa.BrOnNonNull(labelDone)
+              fb += wa.RefNull(watpe.HeapType.Any)
+            } // end block labelNotOurObject
+
+            // if it's not `j.l.Object`, it should be either `i16` array string or js value
             fb += wa.BrOnCastFail(
-              labelNotOurObject,
+              labelNotArray,
               watpe.RefType.anyref,
-              watpe.RefType(genTypeID.ObjectStruct)
+              watpe.RefType.nullable(genTypeID.i16Array)
             )
-            fb += wa.LocalTee(receiverLocalForDispatch)
-            genTableDispatch(objectClassInfo, toStringMethodName, receiverLocalForDispatch)
             fb += wa.BrOnNonNull(labelDone)
-            fb += wa.RefNull(watpe.HeapType.Any)
-          } // end block labelNotOurObject
-
+            fb += wa.RefNull(watpe.HeapType.Any) // if it's null string
+          } // end block labelNotArray
           // Now we have a value that is not one of our objects; the anyref is still on the stack
           fb += wa.Call(genFunctionID.jsValueToStringForConcat)
+          fb += wa.Call(genFunctionID.createArrayFromJSString)
         } // end block labelDone
       }
     }
@@ -1475,19 +1494,26 @@ private class FunctionEmitter private (
             () // no-op
           case BooleanType =>
             fb += wa.Call(genFunctionID.booleanToString)
+            fb += wa.Call(genFunctionID.createArrayFromJSString)
           case CharType =>
             fb += wa.Call(genFunctionID.charToString)
+            fb += wa.Call(genFunctionID.createArrayFromJSString)
           case ByteType | ShortType | IntType =>
             fb += wa.Call(genFunctionID.intToString)
+            fb += wa.Call(genFunctionID.createArrayFromJSString)
           case LongType =>
             fb += wa.Call(genFunctionID.longToString)
+            fb += wa.Call(genFunctionID.createArrayFromJSString)
           case FloatType =>
             fb += wa.F64PromoteF32
             fb += wa.Call(genFunctionID.doubleToString)
+            fb += wa.Call(genFunctionID.createArrayFromJSString)
           case DoubleType =>
             fb += wa.Call(genFunctionID.doubleToString)
+            fb += wa.Call(genFunctionID.createArrayFromJSString)
           case NullType | UndefType =>
             fb += wa.Call(genFunctionID.jsValueToStringForConcat)
+            fb += wa.Call(genFunctionID.createArrayFromJSString)
           case NothingType =>
             () // unreachable
           case NoType =>
@@ -1499,7 +1525,12 @@ private class FunctionEmitter private (
         // Common case for which we want to avoid the hijacked class dispatch
         genTreeAuto(tree)
         markPosition(tree)
+        // (ref null i16Array) is on the stack
+        // TODO: handle null in wasm space, instead of jsValueToStringForConcat
+        //       it's verbose to convert to JS for jsValueToStringForConcat, and convert back to i16array
+        fb += wa.Call(genFunctionID.createJSStringFromArrayNullable)
         fb += wa.Call(genFunctionID.jsValueToStringForConcat) // for `null`
+        fb += wa.Call(genFunctionID.createArrayFromJSString)
 
       case ClassType(className) =>
         genWithDispatch(ctx.getClassInfo(className).isAncestorOfHijackedClass)
