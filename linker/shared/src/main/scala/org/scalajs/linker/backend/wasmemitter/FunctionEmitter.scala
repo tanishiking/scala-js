@@ -897,7 +897,9 @@ private class FunctionEmitter private (
           pushArgs(argsLocals)
           genHijackedClassCall(BoxedDoubleClass)
         } else if (receiverClassName == CharSequenceClass) {
-          // the value must be a `string`; it already has the right type
+          // the value must be a `string` (in js string representation);
+          // here we need to convert to i16Array to invoke a String method
+          fb += wa.Call(genFunctionID.createArrayFromJSString)
           pushArgs(argsLocals)
           genHijackedClassCall(BoxedStringClass)
         } else if (methodName == compareToMethodName) {
