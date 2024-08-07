@@ -936,7 +936,7 @@ private class FunctionEmitter private (
             case SpecialNames.hashCodeMethodName =>
               fb += wa.Call(genFunctionID.identityHashCode)
             case `equalsMethodName` =>
-              fb += wa.Call(genFunctionID.equals)
+              fb += wa.Call(genFunctionID.is)
             case _ =>
               genHijackedClassCall(ObjectClass)
           }
@@ -2815,7 +2815,7 @@ private class FunctionEmitter private (
               fb += wa.BrIf(label)
             case StringLiteral(value) =>
               fb ++= ctx.stringPool.getConstantStringInstr(value)
-              fb += wa.Call(genFunctionID.equals)
+              fb += wa.Call(genFunctionID.is)
               fb += wa.BrIf(label)
             case Null() =>
               fb += wa.RefIsNull

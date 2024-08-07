@@ -619,7 +619,7 @@ object CoreWasmLib {
     genCreateArrayFromJSString()
     genCreateArrayFromJSStringNullable()
     genNonNullString()
-    genEquals()
+    genStringEquals()
     genArrayEquals()
   }
 
@@ -2387,37 +2387,54 @@ object CoreWasmLib {
     fb.buildAndAddToModule()
   }
 
-  // Generate a function that checks two given `anyref` values.
-  // If either of them is a `(ref null i16Array)`, convert it to a JS string
-  // and then compare. This ensures that the same string in different representations
-  // (i16Array vs JS string) returns true.
-  // Otherwise, use the JS function `Object.is` for comparison.
-  private def genEquals()(implicit ctx: WasmContext): Unit = {
+  private def genStringEquals()(implicit ctx: WasmContext): Unit = {
     val fb = newFunctionBuilder(genFunctionID.equals)
-    val x1Param = fb.addParam("x1", RefType.anyref)
-    val x2Param = fb.addParam("x2", RefType.anyref)
+    val str1Param = fb.addParam("str1", RefType.anyref)
+    val str2Param = fb.addParam("str2", RefType.anyref)
     fb.setResultType(Int32)
 
-    fb.block(RefType.anyref) { labelDone =>
-      fb += LocalGet(x1Param)
-      fb += BrOnCastFail(
-        labelDone,
-        RefType.anyref,
-        RefType.nullable(genTypeID.i16Array)
-      )
-      fb += Call(genFunctionID.createJSStringFromArrayNullable)
-    }
+    fb.block(Int32) { doneLabel =>
+      // Block to handle the case where both are i16Array
+      fb.block(RefType.anyref) { notBothArray =>
+        fb += LocalGet(str1Param)
+        fb += BrOnCastFail(
+          notBothArray,
+          RefType.anyref,
+          RefType.nullable(genTypeID.i16Array)
+        )
+        fb += LocalGet(str2Param)
+        fb += BrOnCastFail(
+          notBothArray,
+          RefType.anyref,
+          RefType.nullable(genTypeID.i16Array)
+        )
+        fb += Call(genFunctionID.arrayEquals)
+        fb += Br(doneLabel)
+      } // end of block notBothArray
+      fb += Drop
 
-    fb.block(RefType.anyref) { labelDone =>
-      fb += LocalGet(x2Param)
-      fb += BrOnCastFail(
-        labelDone,
-        RefType.anyref,
-        RefType.nullable(genTypeID.i16Array)
-      )
-      fb += Call(genFunctionID.createJSStringFromArrayNullable)
-    }
-    fb += Call(genFunctionID.is)
+      // Block to handle the case where both are JS string
+      fb.block(RefType.nullable(genTypeID.i16Array)) { notBothJS =>
+        fb += LocalGet(str1Param)
+        fb += BrOnCast(
+          notBothJS,
+          RefType.anyref,
+          RefType.nullable(genTypeID.i16Array)
+        )
+        fb += LocalGet(str2Param)
+        fb += BrOnCast(
+          notBothJS,
+          RefType.anyref,
+          RefType.nullable(genTypeID.i16Array)
+        )
+        fb += Call(genFunctionID.is)
+        fb += Br(doneLabel)
+      } // end of block notBothJS
+      fb += Drop
+
+      // i16Array vs JS String, return 0 (false)
+      fb += I32Const(0)
+    } // end of block doneLabel
 
     fb.buildAndAddToModule()
   }
