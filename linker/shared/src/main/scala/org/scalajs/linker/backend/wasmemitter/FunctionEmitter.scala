@@ -574,7 +574,7 @@ private class FunctionEmitter private (
 
       case JSGlobalRef(name) =>
         markPosition(tree)
-        fb ++= ctx.stringPool.getConstantStringInstr(name)
+        fb ++= ctx.stringPool.getConstantJSStringInstr(name)
         genTree(rhs, AnyType)
         markPosition(tree)
         fb += wa.Call(genFunctionID.jsGlobalRefSet)
@@ -1122,7 +1122,6 @@ private class FunctionEmitter private (
 
         case StringLiteral(v) =>
           fb ++= ctx.stringPool.getConstantStringInstr(v)
-          fb += wa.Call(genFunctionID.createArrayFromJSString)
 
         case ClassOf(typeRef) =>
           genLoadTypeData(fb, typeRef)
@@ -1486,7 +1485,6 @@ private class FunctionEmitter private (
           }
 
           fb ++= ctx.stringPool.getConstantStringInstr("null")
-          fb += wa.Call(genFunctionID.createArrayFromJSString)
         }
       } else {
         /* Dispatch where the receiver can be a JS value.
@@ -1590,11 +1588,15 @@ private class FunctionEmitter private (
         genTreeAuto(tree)
         markPosition(tree)
         // (ref null i16Array) is on the stack
-        // TODO: handle null in wasm space, instead of jsValueToStringForConcat
-        //       it's verbose to convert to JS for jsValueToStringForConcat, and convert back to i16array
-        fb += wa.Call(genFunctionID.createJSStringFromArrayNullable)
-        fb += wa.Call(genFunctionID.jsValueToStringForConcat) // for `null`
-        fb += wa.Call(genFunctionID.createArrayFromJSString)
+        val tmp = addSyntheticLocal(watpe.RefType.nullable(genTypeID.i16Array))
+        fb += wa.LocalTee(tmp)
+        fb += wa.RefIsNull
+        fb.ifThenElse(watpe.RefType(genTypeID.i16Array)) {
+          fb ++= ctx.stringPool.getConstantStringInstr("null")
+        } {
+          fb += wa.LocalGet(tmp)
+          fb += wa.RefAsNonNull
+        }
 
       case ClassType(className) =>
         genWithDispatch(ctx.getClassInfo(className).isAncestorOfHijackedClass)
@@ -1709,7 +1711,6 @@ private class FunctionEmitter private (
     val ctorName = MethodName.constructor(List(ClassRef(BoxedStringClass)))
     genNewScalaClass(ArithmeticExceptionClass, ctorName) {
       fb ++= ctx.stringPool.getConstantStringInstr("/ by zero")
-      fb += wa.Call(genFunctionID.createArrayFromJSString)
     }
     fb += wa.ExternConvertAny
     fb += wa.Throw(genTagID.exception)
@@ -2483,7 +2484,7 @@ private class FunctionEmitter private (
     val JSGlobalRef(name) = tree
 
     markPosition(tree)
-    fb ++= ctx.stringPool.getConstantStringInstr(name)
+    fb ++= ctx.stringPool.getConstantJSStringInstr(name)
     fb += wa.Call(genFunctionID.jsGlobalRefGet)
     AnyType
   }
@@ -2492,7 +2493,7 @@ private class FunctionEmitter private (
     val JSTypeOfGlobalRef(JSGlobalRef(name)) = tree
 
     markPosition(tree)
-    fb ++= ctx.stringPool.getConstantStringInstr(name)
+    fb ++= ctx.stringPool.getConstantJSStringInstr(name)
     fb += wa.Call(genFunctionID.jsGlobalRefTypeof)
     AnyType
   }
@@ -2818,7 +2819,7 @@ private class FunctionEmitter private (
               fb += wa.I32Eq
               fb += wa.BrIf(label)
             case StringLiteral(value) =>
-              fb ++= ctx.stringPool.getConstantStringInstr(value)
+              fb ++= ctx.stringPool.getConstantJSStringInstr(value)
               fb += wa.Call(genFunctionID.is)
               fb += wa.BrIf(label)
             case Null() =>

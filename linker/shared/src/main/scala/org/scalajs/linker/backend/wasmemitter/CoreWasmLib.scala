@@ -638,31 +638,11 @@ object CoreWasmLib {
     val offsetParam = fb.addParam("offset", Int32)
     val sizeParam = fb.addParam("size", Int32)
     val stringIndexParam = fb.addParam("stringIndex", Int32)
-    fb.setResultType(RefType.any)
+    fb.setResultType(RefType(genTypeID.i16Array))
 
-    val str = fb.addLocal("str", RefType.any)
-
-    fb.block(RefType.any) { cacheHit =>
-      fb += GlobalGet(genGlobalID.stringLiteralCache)
-      fb += LocalGet(stringIndexParam)
-      fb += ArrayGet(genTypeID.anyArray)
-
-      fb += BrOnNonNull(cacheHit)
-
-      // cache miss, create a new string and cache it
-      fb += GlobalGet(genGlobalID.stringLiteralCache)
-      fb += LocalGet(stringIndexParam)
-
-      fb += LocalGet(offsetParam)
-      fb += LocalGet(sizeParam)
-      fb += ArrayNewData(genTypeID.i16Array, genDataID.string)
-      fb += Call(genFunctionID.createStringFromData)
-      fb += LocalTee(str)
-      fb += ArraySet(genTypeID.anyArray)
-
-      fb += LocalGet(str)
-    }
-
+    fb += LocalGet(offsetParam)
+    fb += LocalGet(sizeParam)
+    fb += ArrayNewData(genTypeID.i16Array, genDataID.string)
     fb.buildAndAddToModule()
   }
 
@@ -851,6 +831,7 @@ object CoreWasmLib {
           fb += StructGet(genTypeID.typeData, idx)
         }
         fb += Call(genFunctionID.stringLiteral)
+        fb += Call(genFunctionID.createJSStringFromArray)
       }
 
       // typeData.name := <top of stack> ; leave it on the stack
@@ -891,16 +872,16 @@ object CoreWasmLib {
     fb += Call(genFunctionID.jsNewObject)
     // "__typeData": typeData (TODO hide this better? although nobody will notice anyway)
     // (this is used by `isAssignableFromExternal`)
-    fb ++= ctx.stringPool.getConstantStringInstr("__typeData")
+    fb ++= ctx.stringPool.getConstantJSStringInstr("__typeData")
     fb += LocalGet(typeDataParam)
     fb += Call(genFunctionID.jsObjectPush)
     // "name": typeDataName(typeData)
-    fb ++= ctx.stringPool.getConstantStringInstr("name")
+    fb ++= ctx.stringPool.getConstantJSStringInstr("name")
     fb += LocalGet(typeDataParam)
     fb += Call(genFunctionID.typeDataName)
     fb += Call(genFunctionID.jsObjectPush)
     // "isPrimitive": (typeData.kind <= KindLastPrimitive)
-    fb ++= ctx.stringPool.getConstantStringInstr("isPrimitive")
+    fb ++= ctx.stringPool.getConstantJSStringInstr("isPrimitive")
     fb += LocalGet(typeDataParam)
     fb += StructGet(genTypeID.typeData, genFieldID.typeData.kind)
     fb += I32Const(KindLastPrimitive)
@@ -908,7 +889,7 @@ object CoreWasmLib {
     fb += Call(genFunctionID.box(BooleanRef))
     fb += Call(genFunctionID.jsObjectPush)
     // "isArrayClass": (typeData.kind == KindArray)
-    fb ++= ctx.stringPool.getConstantStringInstr("isArrayClass")
+    fb ++= ctx.stringPool.getConstantJSStringInstr("isArrayClass")
     fb += LocalGet(typeDataParam)
     fb += StructGet(genTypeID.typeData, genFieldID.typeData.kind)
     fb += I32Const(KindArray)
@@ -916,7 +897,7 @@ object CoreWasmLib {
     fb += Call(genFunctionID.box(BooleanRef))
     fb += Call(genFunctionID.jsObjectPush)
     // "isInterface": (typeData.kind == KindInterface)
-    fb ++= ctx.stringPool.getConstantStringInstr("isInterface")
+    fb ++= ctx.stringPool.getConstantJSStringInstr("isInterface")
     fb += LocalGet(typeDataParam)
     fb += StructGet(genTypeID.typeData, genFieldID.typeData.kind)
     fb += I32Const(KindInterface)
@@ -924,31 +905,31 @@ object CoreWasmLib {
     fb += Call(genFunctionID.box(BooleanRef))
     fb += Call(genFunctionID.jsObjectPush)
     // "isInstance": closure(isInstance, typeData)
-    fb ++= ctx.stringPool.getConstantStringInstr("isInstance")
+    fb ++= ctx.stringPool.getConstantJSStringInstr("isInstance")
     fb += ctx.refFuncWithDeclaration(genFunctionID.isInstance)
     fb += LocalGet(typeDataParam)
     fb += Call(genFunctionID.closure)
     fb += Call(genFunctionID.jsObjectPush)
     // "isAssignableFrom": closure(isAssignableFrom, typeData)
-    fb ++= ctx.stringPool.getConstantStringInstr("isAssignableFrom")
+    fb ++= ctx.stringPool.getConstantJSStringInstr("isAssignableFrom")
     fb += ctx.refFuncWithDeclaration(genFunctionID.isAssignableFromExternal)
     fb += LocalGet(typeDataParam)
     fb += Call(genFunctionID.closure)
     fb += Call(genFunctionID.jsObjectPush)
     // "checkCast": closure(checkCast, typeData)
-    fb ++= ctx.stringPool.getConstantStringInstr("checkCast")
+    fb ++= ctx.stringPool.getConstantJSStringInstr("checkCast")
     fb += ctx.refFuncWithDeclaration(genFunctionID.checkCast)
     fb += LocalGet(typeDataParam)
     fb += Call(genFunctionID.closure)
     fb += Call(genFunctionID.jsObjectPush)
     // "getComponentType": closure(getComponentType, typeData)
-    fb ++= ctx.stringPool.getConstantStringInstr("getComponentType")
+    fb ++= ctx.stringPool.getConstantJSStringInstr("getComponentType")
     fb += ctx.refFuncWithDeclaration(genFunctionID.getComponentType)
     fb += LocalGet(typeDataParam)
     fb += Call(genFunctionID.closure)
     fb += Call(genFunctionID.jsObjectPush)
     // "newArrayOfThisClass": closure(newArrayOfThisClass, typeData)
-    fb ++= ctx.stringPool.getConstantStringInstr("newArrayOfThisClass")
+    fb ++= ctx.stringPool.getConstantJSStringInstr("newArrayOfThisClass")
     fb += ctx.refFuncWithDeclaration(genFunctionID.newArrayOfThisClass)
     fb += LocalGet(typeDataParam)
     fb += Call(genFunctionID.closure)
@@ -1231,10 +1212,10 @@ object CoreWasmLib {
         fb += Drop // drop `value` which was left on the stack
 
         // throw new TypeError("...")
-        fb ++= ctx.stringPool.getConstantStringInstr("TypeError")
+        fb ++= ctx.stringPool.getConstantJSStringInstr("TypeError")
         fb += Call(genFunctionID.jsGlobalRefGet)
         fb += Call(genFunctionID.jsNewArray)
-        fb ++= ctx.stringPool.getConstantStringInstr(
+        fb ++= ctx.stringPool.getConstantJSStringInstr(
           "Cannot call isInstance() on a Class representing a JS trait/object"
         )
         fb += Call(genFunctionID.jsArrayPush)
@@ -1343,7 +1324,7 @@ object CoreWasmLib {
 
     // load ref.cast<typeData> from["__typeData"] (as a JS selection)
     fb += LocalGet(fromParam)
-    fb ++= ctx.stringPool.getConstantStringInstr("__typeData")
+    fb ++= ctx.stringPool.getConstantJSStringInstr("__typeData")
     fb += Call(genFunctionID.jsSelect)
     fb += RefCast(RefType(typeDataType.heapType))
 
@@ -1545,7 +1526,7 @@ object CoreWasmLib {
 
     // lengthsLen := lengths.length // as a JS field access
     fb += LocalGet(lengthsParam)
-    fb ++= ctx.stringPool.getConstantStringInstr("length")
+    fb ++= ctx.stringPool.getConstantJSStringInstr("length")
     fb += Call(genFunctionID.jsSelect)
     fb += Call(genFunctionID.unbox(IntRef))
     fb += LocalTee(lengthsLenLocal)
@@ -2165,12 +2146,12 @@ object CoreWasmLib {
     }
 
     // throw new TypeError("...")
-    fb ++= ctx.stringPool.getConstantStringInstr("TypeError")
+    fb ++= ctx.stringPool.getConstantJSStringInstr("TypeError")
     fb += Call(genFunctionID.jsGlobalRefGet)
     fb += Call(genFunctionID.jsNewArray)
     // Originally, exception is thrown from JS saying e.g. "obj2.z1__ is not a function"
     // TODO Improve the error message to include some information about the missing method
-    fb ++= ctx.stringPool.getConstantStringInstr("Method not found")
+    fb ++= ctx.stringPool.getConstantJSStringInstr("Method not found")
     fb += Call(genFunctionID.jsArrayPush)
     fb += Call(genFunctionID.jsNew)
     fb += ExternConvertAny
@@ -2252,7 +2233,6 @@ object CoreWasmLib {
     fb.buildAndAddToModule()
   }
 
-  // TODO: do not use js string concat
   private def genWasmStringConcat()(implicit ctx: WasmContext): Unit = {
     import VarGen.genTypeID.i16Array
 
@@ -2387,7 +2367,6 @@ object CoreWasmLib {
       fb += LocalGet(strParam)
       fb += BrOnNonNull(labelNonNull)
       fb ++= ctx.stringPool.getConstantStringInstr("null")
-      fb += Call(genFunctionID.createArrayFromJSString)
     }
 
     fb.buildAndAddToModule()
