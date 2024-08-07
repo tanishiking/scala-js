@@ -931,7 +931,7 @@ private class FunctionEmitter private (
             // case JSValueTypeString =>
             List(JSValueTypeString) -> { () =>
               fb += wa.LocalGet(receiverLocal)
-              // no need to unbox for string
+              fb += wa.Call(genFunctionID.createArrayFromJSString)
               pushArgs(argsLocals)
               genHijackedClassCall(BoxedStringClass)
             }
