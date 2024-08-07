@@ -809,8 +809,8 @@ private class FunctionEmitter private (
          * For the case with the args, it does not hurt either way. We could
          * move it out, but that would make for a less consistent codegen.
          */
-        val argsLocals = fb.block(watpe.RefType.any) { labelNotArray =>
-          val argsLocals = fb.block(watpe.RefType.any) { labelNotOurObject =>
+        def genObjectDispatch(): List[wanme.LocalID] = {
+          fb.block(watpe.RefType.any) { labelNotOurObject =>
             // Load receiver and arguments and store them in temporary variables
             genReceiverNotNull()
             val argsLocals = if (args.isEmpty) {
@@ -851,15 +851,27 @@ private class FunctionEmitter private (
 
             argsLocals
           } // end block labelNotOurObject
+        }
 
-          // Now we have have a value that is not one of our objects,
-          // it must be either i16Array (for string representation) or a JavaScript value
-          fb += wa.BrOnCastFail(labelNotArray, watpe.RefType.any, watpe.RefType(genTypeID.i16Array))
-          pushArgs(argsLocals)
-          genHijackedClassCall(BoxedStringClass)
-          fb += wa.Br(labelDone)
+        // We generate a block for
+        val argsLocals = if (
+          receiverClassName == BoxedStringClass ||
+          receiverClassName == CharSequenceClass
+        ) {
+          fb.block(watpe.RefType.any) { labelNotArray =>
+            val argsLocals = genObjectDispatch()
 
-          argsLocals
+            // Now we have have a value that is not one of our objects,
+            // it must be either i16Array (for string representation) or a JavaScript value
+            fb += wa.BrOnCastFail(labelNotArray, watpe.RefType.any, watpe.RefType(genTypeID.i16Array))
+            pushArgs(argsLocals)
+            genHijackedClassCall(BoxedStringClass)
+            fb += wa.Br(labelDone)
+
+            argsLocals
+          }
+        } else {
+          genObjectDispatch()
         }
 
         /* Now we have a value that is not one of our objects or i16Array, so it must be
