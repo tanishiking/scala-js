@@ -532,6 +532,11 @@ private class FunctionEmitter private (
             )
             genTree(index, IntType)
             genTree(rhs, lhs.tpe)
+            if (lhs.tpe == StringType) {
+              fb += wa.Call(genFunctionID.createJSStringFromArray)
+            } else if (lhs.tpe == ClassType(BoxedStringClass)) {
+              fb += wa.Call(genFunctionID.createJSStringFromArrayNullable)
+            }
             markPosition(tree)
             fb += wa.ArraySet(genTypeID.underlyingOf(arrayTypeRef))
           case NothingType =>
@@ -2615,6 +2620,19 @@ private class FunctionEmitter private (
             ()
           case _ =>
             transformType(tree.tpe) match {
+              case watpe.RefType(nullable, heapType) if heapType == watpe.HeapType(genTypeID.i16Array) =>
+                val local = addSyntheticLocal(watpe.RefType.anyref)
+                fb += wa.LocalSet(local)
+                fb.block(watpe.RefType.nullable(genTypeID.i16Array)) { labelDone =>
+                  fb += wa.LocalGet(local)
+                  fb += wa.BrOnCast(
+                    labelDone,
+                    watpe.RefType.anyref,
+                    watpe.RefType.nullable(genTypeID.i16Array)
+                  )
+                  fb += wa.Call(genFunctionID.createArrayFromJSStringNullable)
+                  if (!nullable) fb += wa.RefAsNonNull
+                }
               case watpe.RefType.anyref =>
                 // nothing to do
                 ()

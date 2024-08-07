@@ -2333,6 +2333,12 @@ object CoreWasmLib {
     fb.buildAndAddToModule()
   }
 
+  // (ref (array (mut i16))) -> (ref any)
+  private def genMaybeCreateJSStringFromArray()(implicit ctx: WasmContext): Unit = {
+    val fb = newFunctionBuilder(genFunctionID.maybeCreateJSStringFromArray)
+    val arrayParam = fb.addParam("str", RefType.anyref)
+  }
+
   // (ref null (array (mut i16))) -> (ref null any)
   private def genCreateJSStringFromArrayNullable()(implicit ctx: WasmContext): Unit = {
     val fb = newFunctionBuilder(genFunctionID.createJSStringFromArrayNullable)

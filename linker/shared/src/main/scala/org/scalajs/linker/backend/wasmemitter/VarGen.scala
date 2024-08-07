@@ -97,6 +97,7 @@ object VarGen {
     case object createArrayFromJSStringNullable extends FunctionID
     case object createJSStringFromArray extends FunctionID
     case object createJSStringFromArrayNullable extends FunctionID
+    case object maybeCreateJSStringFromArray extends FunctionID
     case object nonNullString extends FunctionID
     case object arrayEquals extends FunctionID
     case object equals extends FunctionID
