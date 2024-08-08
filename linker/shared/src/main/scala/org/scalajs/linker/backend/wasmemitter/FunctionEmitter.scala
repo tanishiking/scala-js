@@ -428,9 +428,10 @@ private class FunctionEmitter private (
         fb += wa.Call(genFunctionID.createJSStringFromArrayNullable)
       case (ClassType(CharSequenceClass), AnyType) =>
         // it looks like the value on the stack be either
-        // an instance of `CharSequence` or `i16Array`
+        // an instance of `CharSequence`, `i16Array`, or jsString
+        // if it's JSString -> leave it as it is (val x: CharSequence = "foo" upcast String to Any)
         // if it's i16Array -> convert to JS string
-        // if it's an instance of `CharSequence`, leave as it is.
+        // if it's an instance of `CharSequence` -> leave as it is
         val receiver = addSyntheticLocal(watpe.RefType.anyref)
         fb += wa.LocalSet(receiver)
         fb.block(watpe.RefType.anyref) { labelDone =>
@@ -443,8 +444,13 @@ private class FunctionEmitter private (
             )
             fb += wa.Br(labelDone)
           } // end of labelNotOurObject
-          // otherwise, it should be i16Array
-          fb += wa.RefCast(watpe.RefType.nullable(genTypeID.i16Array))
+
+          // if it's not i16Array, it should be js-string
+          fb += wa.BrOnCastFail(
+            labelDone,
+            watpe.RefType.anyref,
+            watpe.RefType.nullable(genTypeID.i16Array)
+          )
           fb += wa.Call(genFunctionID.createJSStringFromArrayNullable)
         }
       case (primType: PrimTypeWithRef, _) =>
