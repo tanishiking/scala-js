@@ -1050,6 +1050,12 @@ private class FunctionEmitter private (
           case Some(primReceiverType) =>
             if (receiver.tpe == primReceiverType) {
               genTreeAuto(receiver)
+            } else if (
+              receiver.tpe == ClassType(BoxedStringClass) &&
+              primReceiverType == StringType
+            ) {
+              genTreeAuto(receiver)
+              fb += wa.RefAsNonNull
             } else {
               genTree(receiver, AnyType)
               fb += wa.RefAsNonNull
@@ -1558,8 +1564,7 @@ private class FunctionEmitter private (
             fb += wa.Call(genFunctionID.booleanToString)
             fb += wa.Call(genFunctionID.createArrayFromJSString)
           case CharType =>
-            fb += wa.Call(genFunctionID.charToString)
-            fb += wa.Call(genFunctionID.createArrayFromJSString)
+            fb += wa.ArrayNewFixed(genTypeID.i16Array, 1)
           case ByteType | ShortType | IntType =>
             fb += wa.Call(genFunctionID.intToString)
             fb += wa.Call(genFunctionID.createArrayFromJSString)
