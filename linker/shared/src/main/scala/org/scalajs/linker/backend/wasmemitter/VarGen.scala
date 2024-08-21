@@ -274,6 +274,7 @@ object VarGen {
       case object vtable extends FieldID
       case object itables extends FieldID
       case object arrayUnderlying extends FieldID
+      final case class itableSlot(i: Int) extends FieldID
     }
 
     object reflectiveProxy {

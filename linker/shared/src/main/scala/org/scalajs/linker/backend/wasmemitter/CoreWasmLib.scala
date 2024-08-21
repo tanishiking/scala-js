@@ -126,7 +126,6 @@ object CoreWasmLib {
     genArrayClassTypes()
 
     genBoxedZeroGlobals()
-    genArrayClassGlobals()
   }
 
   // --- Type definitions ---
@@ -167,10 +166,21 @@ object CoreWasmLib {
       genTypeID.typeDataArray,
       ArrayType(FieldType(RefType(genTypeID.typeData), isMutable = false))
     )
+
     genCoreType(
       genTypeID.itables,
-      ArrayType(FieldType(RefType.nullable(HeapType.Struct), isMutable = true))
+      StructType(
+        (0 until ctx.itablesLength).map { i =>
+          StructField(
+            genFieldID.objStruct.itableSlot(i),
+            OriginalName.NoOriginalName,
+            RefType.nullable(HeapType.Struct),
+            isMutable = false
+          )
+        }.toList
+      )
     )
+
     genCoreType(
       genTypeID.reflectiveProxies,
       ArrayType(FieldType(RefType(genTypeID.reflectiveProxy), isMutable = false))
@@ -602,23 +612,6 @@ object CoreWasmLib {
         )
       )
     }
-  }
-
-  private def genArrayClassGlobals()(implicit ctx: WasmContext): Unit = {
-    // Common itable global for all array classes
-    val itablesInit = List(
-      I32Const(ctx.itablesLength),
-      ArrayNewDefault(genTypeID.itables)
-    )
-    ctx.addGlobal(
-      Global(
-        genGlobalID.arrayClassITable,
-        OriginalName(genGlobalID.arrayClassITable.toString()),
-        isMutable = false,
-        RefType(genTypeID.itables),
-        init = Expr(itablesInit)
-      )
-    )
   }
 
   // --- Function definitions ---
