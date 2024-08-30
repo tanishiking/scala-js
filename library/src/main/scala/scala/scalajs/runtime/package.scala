@@ -93,12 +93,6 @@ package object runtime {
   def privateFieldsSymbol(): Any =
     PrivateFieldsSymbolHolder.privateFieldsSymbol
 
-  /** Information known at link-time, given the output configuration.
-   *
-   *  See [[LinkingInfo]] for details.
-   */
-  def linkingInfo: LinkingInfo = throw new Error("stub")
-
   /** Identity hash code of an object. */
   def identityHashCode(x: Object): Int = throw new Error("stub")
 

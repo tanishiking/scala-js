@@ -570,6 +570,11 @@ object Serializers {
           writeName(className)
           writeTrees(captureValues)
 
+        case LinkTimeProperty(name) =>
+          writeTagAndPos(TagLinkTimeProperty)
+          writeString(name)
+          writeType(tree.tpe)
+
         case Transient(value) =>
           throw new InvalidIRException(tree,
               "Cannot serialize a transient IR node (its value is of class " +
@@ -1321,6 +1326,9 @@ object Serializers {
 
         case TagCreateJSClass =>
           CreateJSClass(readClassName(), readTrees())
+
+        case TagLinkTimeProperty =>
+          LinkTimeProperty(readString())(readType())
       }
     }
 

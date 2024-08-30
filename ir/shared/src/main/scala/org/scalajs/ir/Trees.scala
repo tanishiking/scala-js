@@ -897,6 +897,15 @@ object Trees {
      */
     def isValidJSGlobalRefName(name: String): Boolean =
       isJSIdentifierName(name) && !ReservedJSIdentifierNames.contains(name)
+
+    /** The value of the JavaScript that is an alias to `this`
+     *  at the top-level of the generated file.
+     *
+     *  `scala.scalajs.js.special.fileLevelThis` should be compiled to
+     *  `JSGlobalRef("$fileLevelThis")`, and the backends are expected to
+     *  generate `const $fileLevelThis = this` at the top-level of the file.
+     */
+    final val FileLevelThis = "$fileLevelThis"
   }
 
   sealed case class JSTypeOfGlobalRef(globalRef: JSGlobalRef)(
@@ -1039,6 +1048,10 @@ object Trees {
       extends Tree {
     val tpe = AnyType
   }
+
+  sealed case class LinkTimeProperty(name: String)(val tpe: Type)(
+      implicit val pos: Position)
+      extends Tree
 
   // Transient, a special one
 

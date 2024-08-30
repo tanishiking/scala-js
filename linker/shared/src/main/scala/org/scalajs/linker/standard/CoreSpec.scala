@@ -96,6 +96,9 @@ final class CoreSpec private (
       targetIsWebAssembly
     )
   }
+
+  val linkTimeProperties = new LinkTimeProperties(
+    semantics, esFeatures, targetIsWebAssembly)
 }
 
 private[linker] object CoreSpec {

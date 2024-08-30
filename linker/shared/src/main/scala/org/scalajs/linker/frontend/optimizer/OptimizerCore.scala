@@ -610,6 +610,10 @@ private[optimizer] abstract class OptimizerCore(
           pretransformExpr(tree)(finishTransform(isStat))
         }
 
+      case prop: LinkTimeProperty =>
+        config.coreSpec.linkTimeProperties
+          .transformLinkTimeProperty(prop)
+
       // JavaScript expressions
 
       case JSNew(ctor, args) =>
@@ -1009,6 +1013,10 @@ private[optimizer] abstract class OptimizerCore(
               default
           }
         }
+
+      case prop: LinkTimeProperty =>
+        cont(PreTransLit(config.coreSpec.linkTimeProperties
+            .transformLinkTimeProperty(prop)))
 
       case tree: JSSelect =>
         pretransformJSSelect(tree, isLhsOfAssign = false)(cont)

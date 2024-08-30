@@ -411,6 +411,7 @@ private class FunctionEmitter private (
       case t: IdentityHashCode    => genIdentityHashCode(t)
       case t: WrapAsThrowable     => genWrapAsThrowable(t)
       case t: UnwrapFromThrowable => genUnwrapFromThrowable(t)
+      case t: LinkTimeProperty    => genLinkTimeProperty(t)
 
       // JavaScript expressions
       case t: JSNew                => genJSNew(t)
@@ -2297,6 +2298,12 @@ private class FunctionEmitter private (
     AnyType
   }
 
+  private def genLinkTimeProperty(tree: LinkTimeProperty): Type = {
+    val lit = ctx.coreSpec.linkTimeProperties.transformLinkTimeProperty(tree)
+    genTreeAuto(lit)
+    lit.tpe
+  }
+
   private def genJSNew(tree: JSNew): Type = {
     val JSNew(ctor, args) = tree
 
@@ -2473,8 +2480,13 @@ private class FunctionEmitter private (
     val JSGlobalRef(name) = tree
 
     markPosition(tree)
-    fb ++= ctx.stringPool.getConstantStringInstr(name)
-    fb += wa.Call(genFunctionID.jsGlobalRefGet)
+
+    if (name == JSGlobalRef.FileLevelThis) {
+      fb += wa.GlobalGet(genGlobalID.fileLevelThis)
+    } else {
+      fb ++= ctx.stringPool.getConstantStringInstr(name)
+      fb += wa.Call(genFunctionID.jsGlobalRefGet)
+    }
     AnyType
   }
 
@@ -2502,9 +2514,8 @@ private class FunctionEmitter private (
   }
 
   private def genJSLinkingInfo(tree: JSLinkingInfo): Type = {
-    markPosition(tree)
-    fb += wa.GlobalGet(genGlobalID.jsLinkingInfo)
-    AnyType
+    throw new IllegalArgumentException(
+      "JSLinkingInfo is deprecated as of version 1.17.0 and should not appear.")
   }
 
   private def genArrayLength(tree: ArrayLength): Type = {

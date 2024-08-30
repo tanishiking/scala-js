@@ -732,6 +732,8 @@ private final class ClassDefChecker(classDef: ClassDef,
       case UnwrapFromThrowable(expr) =>
         checkTree(expr, env)
 
+      case LinkTimeProperty(name) =>
+
       // JavaScript expressions
 
       case JSNew(ctor, args) =>

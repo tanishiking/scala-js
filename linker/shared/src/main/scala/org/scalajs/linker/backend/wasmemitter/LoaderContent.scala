@@ -79,16 +79,6 @@ function installJSField(instance, name, value) {
   });
 }
 
-// FIXME We need to adapt this to the correct values
-const linkingInfo = Object.freeze({
-  "esVersion": 6,
-  "assumingES6": true,
-  "isWebAssembly": true,
-  "productionMode": false,
-  "linkerVersion": "${ScalaJSVersions.current}",
-  "fileLevelThis": this
-});
-
 const scalaJSHelpers = {
   // JSTag
   JSTag: WebAssembly.JSTag,
@@ -99,6 +89,9 @@ const scalaJSHelpers = {
   // undefined
   undef: void 0,
   isUndef: (x) => x === (void 0),
+
+  // fileLevelThis (always undefined within ESModule)
+  fileLevelThis: this,
 
   // Zero boxes
   bFalse: false,
@@ -203,7 +196,6 @@ const scalaJSHelpers = {
   jsDelete: (o, p) => { delete o[p]; },
   jsForInSimple: (o, f) => { for (var k in o) f(k); },
   jsIsTruthy: (x) => !!x,
-  jsLinkingInfo: linkingInfo,
 
   // Excruciating list of all the JS operators
   jsUnaryPlus: (a) => +a,

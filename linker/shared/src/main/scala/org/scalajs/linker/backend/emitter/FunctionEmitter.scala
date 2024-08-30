@@ -251,6 +251,7 @@ private[emitter] class FunctionEmitter(sjsGen: SJSGen) {
   import sjsGen._
   import jsGen._
   import config._
+  import coreSpec._
   import nameGen._
   import varGen._
 
@@ -1286,6 +1287,9 @@ private[emitter] class FunctionEmitter(sjsGen: SJSGen) {
         // Expressions preserving pureness (modulo NPE) but requiring that expr be a var
         case WrapAsThrowable(expr @ (VarRef(_) | Transient(JSVarRef(_, _))))     => test(expr)
         case UnwrapFromThrowable(expr @ (VarRef(_) | Transient(JSVarRef(_, _)))) => testNPE(expr)
+
+        // should be transformed to literal
+        case LinkTimeProperty(name) => true
 
         // Transients preserving pureness (modulo NPE)
         case Transient(Cast(expr, _)) =>
@@ -2760,6 +2764,10 @@ private[emitter] class FunctionEmitter(sjsGen: SJSGen) {
               genSelect(newExpr, FieldIdent(exceptionFieldName)),
               genCheckNotNull(newExpr))
 
+        case prop: LinkTimeProperty =>
+          transformExpr(config.coreSpec.linkTimeProperties
+              .transformLinkTimeProperty(prop), preserveChar)
+
         // Transients
 
         case Transient(CheckNotNull(obj)) =>
@@ -2938,13 +2946,17 @@ private[emitter] class FunctionEmitter(sjsGen: SJSGen) {
           })
 
         case JSGlobalRef(name) =>
-          js.VarRef(transformGlobalVarIdent(name))
+          if (name == JSGlobalRef.FileLevelThis)
+            globalVar(VarField.fileLevelThis, CoreVar)
+          else
+            js.VarRef(transformGlobalVarIdent(name))
 
         case JSTypeOfGlobalRef(globalRef) =>
           js.UnaryOp(JSUnaryOp.typeof, transformExprNoChar(globalRef))
 
         case JSLinkingInfo() =>
-          globalVar(VarField.linkingInfo, CoreVar)
+          throw new IllegalArgumentException(
+            "JSLinkingInfo is deprecated as of version 1.17.0 and should not appear.")
 
         // Literals
 

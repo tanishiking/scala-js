@@ -214,7 +214,7 @@ package object special {
    */
   @inline
   def fileLevelThis: scala.Any =
-    scala.scalajs.runtime.linkingInfo.fileLevelThis
+    throw new java.lang.Error("stub")
 
   /** Exact equivalent of the `debugger` keyword of JavaScript.
    *
@@ -230,5 +230,4 @@ package object special {
    */
   def debugger(): Unit =
     throw new java.lang.Error("stub")
-
 }

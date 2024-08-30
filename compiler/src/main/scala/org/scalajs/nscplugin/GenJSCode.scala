@@ -5173,10 +5173,6 @@ abstract class GenJSCode[G <: Global with Singleton](val global: G)
             genStatOrExpr(args(1), isStat)
           }
 
-        case LINKING_INFO =>
-          // runtime.linkingInfo
-          js.JSLinkingInfo()
-
         case IDENTITY_HASH_CODE =>
           // runtime.identityHashCode(arg)
           val arg = genArgs1
@@ -5361,6 +5357,29 @@ abstract class GenJSCode[G <: Global with Singleton](val global: G)
         case UNWRAP_FROM_THROWABLE =>
           // js.special.unwrapFromThrowable(arg)
           js.UnwrapFromThrowable(genArgs1)
+
+        case LINKTIME_PROPERTY_BOOLEAN |
+             LINKTIME_PROPERTY_INT |
+             LINKTIME_PROPERTY_STRING =>
+          // LinkingInfo.linkTimePropertyXXX("...")
+          val arg = genArgs1
+          val tpe: jstpe.Type = code match {
+            case LINKTIME_PROPERTY_BOOLEAN => jstpe.BooleanType
+            case LINKTIME_PROPERTY_INT => jstpe.IntType
+            case LINKTIME_PROPERTY_STRING => jstpe.StringType
+          }
+          arg match {
+            case js.StringLiteral(name) =>
+              js.LinkTimeProperty(name)(tpe)
+            case _ =>
+              reporter.error(args.head.pos,
+                "The argument of linkTimePropertyXXX must be a String literal: \"...\"")
+              js.LinkTimeProperty("erroneous")(tpe)
+          }
+
+        case FILELEVEL_THIS =>
+          // js.special.fileLevelThis
+          js.JSGlobalRef(js.JSGlobalRef.FileLevelThis)
       }
     }
 

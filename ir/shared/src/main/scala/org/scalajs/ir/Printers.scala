@@ -879,6 +879,11 @@ object Printers {
           print(className)
           printRow(captureValues, "](", ", ", ")")
 
+        case LinkTimeProperty(name) =>
+          print("LinkTimeProperty(")
+          print(name)
+          print(")")
+
         // Transient
 
         case Transient(value) =>
