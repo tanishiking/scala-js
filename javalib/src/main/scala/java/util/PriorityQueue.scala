@@ -12,7 +12,7 @@
 
 package java.util
 
-import java.lang.Utils.nextPowerOfTwo
+import java.lang.Utils.roundUpToPowerOfTwo
 
 import scala.annotation.tailrec
 
@@ -62,12 +62,12 @@ class PriorityQueue[E] private (
         NaturalComparator.select(c.comparator().asInstanceOf[Comparator[_ >: E]])
       case _ =>
         NaturalComparator
-    }, internal = true, nextPowerOfTwo(c.size()))
+    }, internal = true, roundUpToPowerOfTwo(c.size()))
     addAll(c)
   }
 
   def this(c: PriorityQueue[_ <: E]) = {
-    this(c.comp.asInstanceOf[Comparator[_ >: E]], internal = true, nextPowerOfTwo(c.size()))
+    this(c.comp.asInstanceOf[Comparator[_ >: E]], internal = true, roundUpToPowerOfTwo(c.size()))
     addAll(c)
   }
 
@@ -75,7 +75,7 @@ class PriorityQueue[E] private (
     this(NaturalComparator.select(
         sortedSet.comparator().asInstanceOf[Comparator[_ >: E]]),
         internal = true,
-        nextPowerOfTwo(sortedSet.size()))
+        roundUpToPowerOfTwo(sortedSet.size()))
     addAll(sortedSet)
   }
 
@@ -432,5 +432,5 @@ class PriorityQueue[E] private (
   // Wasm only
   private def ensureCapacity(minCapacity: Int): Unit =
     if (innerWasm.length < minCapacity)
-      innerWasm = Arrays.copyOf(innerWasm, nextPowerOfTwo(minCapacity))
+      innerWasm = Arrays.copyOf(innerWasm, roundUpToPowerOfTwo(minCapacity))
 }
