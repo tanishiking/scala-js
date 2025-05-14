@@ -30,22 +30,12 @@ class ArrayDeque[E] private (initialCapacity: Int)
    * we use a scala.Array to avoid JS interop.
    */
 
-  private val innerJS: js.Array[E] =
-    if (LinkingInfo.isWebAssembly) null
-    else new js.Array[E](Math.max(initialCapacity, 16))
-
-  private var innerWasm: Array[AnyRef] =
-    if (LinkingInfo.isWebAssembly) new Array[AnyRef](Math.max(initialCapacity, 16))
-    else null
-
-  if (!LinkingInfo.isWebAssembly)
-    fillNulls(0, innerJS.length)
+  private var inner: Array[AnyRef] = new Array[AnyRef](Math.max(initialCapacity, 16))
 
   private var status = 0
   private var startIndex = 0 // inclusive, 0 <= startIndex < inner.length
   private var endIndex = // exclusive, 0 < endIndex <= inner.length
-    if (LinkingInfo.isWebAssembly) innerWasm.length
-    else innerJS.length
+    inner.length
   private var empty = true
 
   def this() = this(16)
@@ -72,8 +62,7 @@ class ArrayDeque[E] private (initialCapacity: Int)
       startIndex -= 1
       if (startIndex < 0)
         startIndex = length() - 1
-      if (LinkingInfo.isWebAssembly) innerWasm(startIndex) = e.asInstanceOf[AnyRef]
-      else innerJS(startIndex) = e
+      inner(startIndex) = e.asInstanceOf[AnyRef]
       status += 1
       empty = false
       true
@@ -88,8 +77,7 @@ class ArrayDeque[E] private (initialCapacity: Int)
       endIndex += 1
       if (endIndex > length())
         endIndex = 1
-      if (LinkingInfo.isWebAssembly) innerWasm(endIndex - 1) = e.asInstanceOf[AnyRef]
-      else innerJS(endIndex - 1) = e
+      inner(endIndex - 1) = e.asInstanceOf[AnyRef]
       status += 1
       empty = false
       true
@@ -113,17 +101,8 @@ class ArrayDeque[E] private (initialCapacity: Int)
   def pollFirst(): E = {
     if (isEmpty()) null.asInstanceOf[E]
     else {
-      val res = {
-        if (LinkingInfo.isWebAssembly) {
-          val res = innerWasm(startIndex).asInstanceOf[E]
-          innerWasm(startIndex) = null // free reference for GC
-          res
-        } else {
-          val res = innerJS(startIndex)
-          innerJS(startIndex) = null.asInstanceOf[E] // free reference for GC
-          res
-        }
-      }
+      val res = inner(startIndex).asInstanceOf[E]
+      inner(startIndex) = null // free reference for GC
       startIndex += 1
       if (startIndex == endIndex)
         empty = true
@@ -138,17 +117,8 @@ class ArrayDeque[E] private (initialCapacity: Int)
     if (isEmpty()) {
       null.asInstanceOf[E]
     } else {
-      val res = {
-        if (LinkingInfo.isWebAssembly) {
-          val res = innerWasm(endIndex - 1).asInstanceOf[E]
-          innerWasm(endIndex - 1) = null // free reference for GC
-          res
-        } else {
-          val res = innerJS(endIndex - 1)
-          innerJS(endIndex - 1) = null.asInstanceOf[E] // free reference for GC
-          res
-        }
-      }
+      val res = inner(endIndex - 1).asInstanceOf[E]
+      inner(endIndex - 1) = null // free reference for GC
       endIndex -= 1
       if (startIndex == endIndex)
         empty = true
@@ -177,8 +147,7 @@ class ArrayDeque[E] private (initialCapacity: Int)
     if (isEmpty()) {
       null.asInstanceOf[E]
     } else {
-      if (LinkingInfo.isWebAssembly) innerWasm(startIndex).asInstanceOf[E]
-      else innerJS(startIndex)
+      inner(startIndex).asInstanceOf[E]
     }
   }
 
@@ -186,8 +155,7 @@ class ArrayDeque[E] private (initialCapacity: Int)
     if (isEmpty()) {
       null.asInstanceOf[E]
     } else {
-      if (LinkingInfo.isWebAssembly) innerWasm(endIndex - 1).asInstanceOf[E]
-      else innerJS(endIndex - 1)
+      inner(endIndex - 1).asInstanceOf[E]
     }
   }
 
@@ -266,8 +234,7 @@ class ArrayDeque[E] private (initialCapacity: Int)
       else if (nextIndex >= length())
         nextIndex = 0
 
-      if (LinkingInfo.isWebAssembly) innerWasm(lastIndex).asInstanceOf[E]
-      else innerJS(lastIndex)
+      inner(lastIndex).asInstanceOf[E]
     }
 
     override def remove(): Unit = {
@@ -323,8 +290,7 @@ class ArrayDeque[E] private (initialCapacity: Int)
           nextIndex = length() - 1
       }
 
-      if (LinkingInfo.isWebAssembly) innerWasm(lastIndex).asInstanceOf[E]
-      else innerJS(lastIndex)
+      inner(lastIndex).asInstanceOf[E]
     }
 
     override def remove(): Unit = {
@@ -366,17 +332,14 @@ class ArrayDeque[E] private (initialCapacity: Int)
     // scalastyle:off return
     if (isEmpty())
       return -1
-    val innerJS = this.innerJS // local copy
-    val innerWasm = this.innerWasm // local copy
+    val inner = this.inner // local copy
     val capacity = length() // local copy
     val endIndex = this.endIndex // local copy
     var i = startIndex
     do {
       if (i >= capacity)
         i = 0
-      val obj =
-        if (LinkingInfo.isWebAssembly) innerWasm(i).asInstanceOf[E]
-        else innerJS(i)
+      val obj = inner(i).asInstanceOf[E]
       if (Objects.equals(obj, o))
         return i
       i += 1 // let i overrun so we catch endIndex == capacity
@@ -389,17 +352,14 @@ class ArrayDeque[E] private (initialCapacity: Int)
     // scalastyle:off return
     if (isEmpty())
       return -1
-    val innerJS = this.innerJS // local copy
-    val innerWasm = this.innerWasm // local copy
+    val inner = this.inner // local copy
     val startIndex = this.startIndex // local copy
     var i = endIndex
     do {
       i -= 1
       if (i < 0)
         i = length() - 1
-      val obj =
-        if (LinkingInfo.isWebAssembly) innerWasm(i).asInstanceOf[E]
-        else innerJS(i)
+      val obj = inner(i).asInstanceOf[E]
       if (Objects.equals(obj, o))
         return i
     } while (i != startIndex)
@@ -412,30 +372,12 @@ class ArrayDeque[E] private (initialCapacity: Int)
       // Nothing to do (constructor ensures capacity is always non-zero).
     } else if (startIndex == 0 && endIndex == length()) {
       val oldCapacity = length()
-      if (LinkingInfo.isWebAssembly) {
-        innerWasm = Arrays.copyOf(innerWasm, oldCapacity * 2)
-      } else {
-        innerJS.length *= 2
-        // no copying required: We just keep adding to the end.
-        // However, ensure array is dense.
-        fillNulls(oldCapacity, length())
-      }
+      inner = Arrays.copyOf(inner, oldCapacity * 2)
     } else if (startIndex == endIndex) {
       val oldCapacity = length()
-      if (LinkingInfo.isWebAssembly) {
-        val newArr = new Array[AnyRef](oldCapacity * 2)
-        System.arraycopy(innerWasm, 0, newArr, oldCapacity, endIndex)
-        innerWasm = newArr
-      } else {
-        innerJS.length *= 2
-        // move beginning of array to end
-        for (i <- 0 until endIndex) {
-          innerJS(i + oldCapacity) = innerJS(i)
-          innerJS(i) = null.asInstanceOf[E] // free old reference for GC
-        }
-        // ensure rest of array is dense
-        fillNulls(endIndex + oldCapacity, length())
-      }
+      val newArr = new Array[AnyRef](oldCapacity * 2)
+      System.arraycopy(inner, 0, newArr, oldCapacity, endIndex)
+      inner= newArr
       endIndex += oldCapacity
     }
   }
@@ -461,15 +403,8 @@ class ArrayDeque[E] private (initialCapacity: Int)
       pollLast()
       true
     } else if (target < endIndex) {
-      if (LinkingInfo.isWebAssembly) {
-        System.arraycopy(innerWasm, target + 1, innerWasm, target, endIndex - target)
-        innerWasm(endIndex - 1) = null // free reference for GC
-      } else {
-        // Shift elements from endIndex towards target
-        for (i <- target until endIndex - 1)
-          innerJS(i) = innerJS(i + 1)
-        innerJS(endIndex - 1) = null.asInstanceOf[E] // free reference for GC
-      }
+      System.arraycopy(inner, target + 1, inner, target, endIndex - target)
+      inner(endIndex - 1) = null // free reference for GC
       status += 1
 
       /* Note that endIndex >= 2:
@@ -498,18 +433,8 @@ class ArrayDeque[E] private (initialCapacity: Int)
        * ==> contradiction.
        */
 
-      if (LinkingInfo.isWebAssembly) {
-        System.arraycopy(innerWasm, startIndex, innerWasm, startIndex + 1, target - startIndex)
-        innerWasm(startIndex) = null // free reference for GC
-      } else {
-        // for (i <- target until startIndex by -1)
-        var i = target
-        while (i != startIndex) {
-          innerJS(i) = innerJS(i - 1)
-          i -= 1
-        }
-        innerJS(startIndex) = null.asInstanceOf[E] // free reference for GC
-      }
+      System.arraycopy(inner, startIndex, inner, startIndex + 1, target - startIndex)
+      inner(startIndex) = null // free reference for GC
 
       status += 1
 
@@ -526,14 +451,7 @@ class ArrayDeque[E] private (initialCapacity: Int)
     }
   }
 
-  // JS only
-  private def fillNulls(from: Int, until: Int): Unit = {
-    for (i <- from until until)
-      innerJS(i) = null.asInstanceOf[E]
-  }
-
   @inline
   private def length(): Int =
-    if (LinkingInfo.isWebAssembly) innerWasm.length
-    else innerJS.length
+    inner.length
 }
