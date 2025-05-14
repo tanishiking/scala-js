@@ -85,59 +85,44 @@ class PriorityQueue[E] private (
    * we use a scala.Array to avoid JS interop.
    */
 
+  private val innerImpl: InnerArrayImpl =
+    if (LinkingInfo.isWebAssembly)
+      InnerArrayImpl.JArrayImpl
+    else
+      InnerArrayImpl.JSArrayImpl
+
   // The index 0 is not used; the root is at index 1.
   // This is standard practice in binary heaps, to simplify arithmetics.
-  private val innerJS: js.Array[E] =
-    if (LinkingInfo.isWebAssembly) null
-    else js.Array[E](null.asInstanceOf[E])
 
-  private var innerWasm: Array[AnyRef] =
-    if (LinkingInfo.isWebAssembly) new Array[AnyRef](initialCapacity)
-    else null
-
-  // Wasm only: size of the objects stored in the inner array
-  private var innerSize = 1
+  private var inner: innerImpl.Repr = innerImpl.make(initialCapacity)
 
   override def add(e: E): Boolean = {
     if (e == null)
       throw new NullPointerException()
+
     if (LinkingInfo.isWebAssembly) {
-      ensureCapacity(innerSize + 1)
-      innerWasm(innerSize) = e.asInstanceOf[AnyRef]
-      innerSize += 1
-    } else {
-      innerJS.push(e)
+      val minCapacity = innerImpl.length(inner) + 1
+      if (innerImpl.capacity(inner) < minCapacity)
+        inner = innerImpl.resized(inner, minCapacity)
     }
-    fixUp(length() - 1)
+    innerImpl.push(inner, e)
+    fixUp(innerImpl.length(inner) - 1)
     true
   }
 
   def offer(e: E): Boolean = add(e)
 
-  def peek(): E = {
-    if (LinkingInfo.isWebAssembly) {
-      if (innerSize > 1) innerWasm(1).asInstanceOf[E]
-      else null.asInstanceOf[E]
-    } else {
-      if (innerJS.length > 1) innerJS(1)
-      else null.asInstanceOf[E]
-    }
-  }
+  def peek(): E =
+    if (innerImpl.length(inner) > 1) innerImpl.get(inner, 1)
+    else null.asInstanceOf[E]
 
   override def remove(o: Any): Boolean = {
     if (o == null) {
       false
     } else {
-      val len = length()
+      val len = innerImpl.length(inner)
       var i = 1
-      while ({
-        i != len && {
-          val obj =
-            if (LinkingInfo.isWebAssembly) innerWasm(i).asInstanceOf[E]
-            else innerJS(i)
-          !o.equals(obj)
-        }
-      }) {
+      while (i != len && !o.equals(innerImpl.get(inner, i))) {
         i += 1
       }
 
@@ -151,16 +136,9 @@ class PriorityQueue[E] private (
   }
 
   private def removeExact(o: Any): Unit = {
-    val len = length()
+    val len = innerImpl.length(inner)
     var i = 1
-    while ({
-      i != len && {
-        val obj =
-          if (LinkingInfo.isWebAssembly) innerWasm(i)
-          else innerJS(i).asInstanceOf[AnyRef]
-        o.asInstanceOf[AnyRef] ne obj
-      }
-    }) {
+    while (i != len && (o.asInstanceOf[AnyRef] ne innerImpl.get(inner, i).asInstanceOf[AnyRef])) {
       i += 1
     }
     if (i == len)
@@ -169,39 +147,25 @@ class PriorityQueue[E] private (
   }
 
   private def removeAt(i: Int): Unit = {
-    val newLength = length() - 1
-    if (LinkingInfo.isWebAssembly) {
-      if (i == newLength) {
-        innerWasm(innerSize - 1) = null // free reference for GC
-      } else {
-        innerWasm(i) = innerWasm(newLength)
-        fixUpOrDown(i)
-        innerWasm(innerSize - 1) = null // free reference for GC
-      }
-      innerSize = newLength
+    val newLength = innerImpl.length(inner) - 1
+    if (i == newLength) {
+      innerImpl.setLength(inner, newLength)
     } else {
-      if (i == newLength) {
-        innerJS.length = newLength
-      } else {
-        innerJS(i) = innerJS(newLength)
-        innerJS.length = newLength
-        fixUpOrDown(i)
-      }
+      innerImpl.set(inner, i, innerImpl.get(inner, newLength))
+      innerImpl.setLength(inner, newLength)
+      fixUpOrDown(i)
     }
+    if (LinkingInfo.isWebAssembly)
+      innerImpl.set(inner, innerImpl.length(inner), null.asInstanceOf[E]) // free reference for GC
   }
 
   override def contains(o: Any): Boolean = {
     if (o == null) {
       false
     } else {
-      val len = length()
+      val len = innerImpl.length(inner)
       var i = 1
-      while (i != len && {
-        val obj =
-          if (LinkingInfo.isWebAssembly) innerWasm(i).asInstanceOf[E]
-          else innerJS(i)
-        !o.equals(obj)
-      }) {
+      while (i != len && !o.equals(innerImpl.get(inner, i))) {
         i += 1
       }
       i != len
@@ -210,23 +174,20 @@ class PriorityQueue[E] private (
 
   def iterator(): Iterator[E] = {
     new Iterator[E] {
-      private[this] var innerJS: js.Array[E] = PriorityQueue.this.innerJS
-      private[this] var innerWasm: Array[AnyRef] = PriorityQueue.this.innerWasm
-      private[this] var innerIterSize: Int = PriorityQueue.this.innerSize
+      private[this] var inner: innerImpl.Repr = PriorityQueue.this.inner
+      // Wasm only
+      private[this] var innerIterSize: Int = innerImpl.length(PriorityQueue.this.inner)
       private[this] var nextIdx: Int = 1
       private[this] var last: E = _ // null
 
       def hasNext(): Boolean =
         if (LinkingInfo.isWebAssembly) nextIdx < innerIterSize
-        else nextIdx < innerJS.length
+        else nextIdx < innerImpl.length(inner)
 
       def next(): E = {
         if (!hasNext())
           throw new NoSuchElementException("empty iterator")
-        last = {
-          if (LinkingInfo.isWebAssembly) innerWasm(nextIdx).asInstanceOf[E]
-          else innerJS(nextIdx)
-        }
+        last = innerImpl.get(inner, nextIdx)
         nextIdx += 1
         last
       }
@@ -252,17 +213,11 @@ class PriorityQueue[E] private (
 
         if (last == null)
           throw new IllegalStateException()
-        if (LinkingInfo.isWebAssembly) {
-          if (innerWasm eq PriorityQueue.this.innerWasm) {
-            innerIterSize = innerSize - nextIdx
-            innerWasm = Arrays.copyOfRange(innerWasm, nextIdx, innerSize)
-            nextIdx = 0
-          }
-        } else {
-          if (innerJS eq PriorityQueue.this.innerJS) {
-            innerJS = innerJS.jsSlice(nextIdx)
-            nextIdx = 0
-          }
+        if (inner eq PriorityQueue.this.inner) {
+          if (LinkingInfo.isWebAssembly)
+            innerIterSize = innerImpl.length(inner) - nextIdx
+          inner = innerImpl.copyFrom(inner, nextIdx)
+          nextIdx = 0
         }
         removeExact(last)
         last = null.asInstanceOf[E]
@@ -270,44 +225,24 @@ class PriorityQueue[E] private (
     }
   }
 
-  def size(): Int =
-    if (LinkingInfo.isWebAssembly) innerSize - 1
-    else innerJS.length - 1
+  def size(): Int = innerImpl.length(inner) - 1
 
-  override def clear(): Unit = {
-    if (LinkingInfo.isWebAssembly) {
-      Arrays.fill(innerWasm, null)
-      innerSize = 1
-    } else {
-      innerJS.length = 1
-    }
-  }
+  override def clear(): Unit =
+    innerImpl.clear(inner)
 
   def poll(): E = {
-    if (LinkingInfo.isWebAssembly) {
-      val innerWasm = this.innerWasm // local copy
-      if (innerSize > 1) {
-        val newSize = innerSize - 1
-        val result = innerWasm(1).asInstanceOf[E]
-        innerWasm(1) = innerWasm(newSize)
-        innerSize = newSize
-        fixDown(1)
-        result
-      } else {
-        null.asInstanceOf[E]
-      }
+    val inner = this.inner // local copy
+    if (innerImpl.length(inner) > 1) {
+      val newSize = innerImpl.length(inner) - 1
+      val result = innerImpl.get(inner, 1)
+      innerImpl.set(inner, 1, innerImpl.get(inner, newSize))
+      innerImpl.setLength(inner, newSize)
+      fixDown(1)
+      if (LinkingInfo.isWebAssembly)
+        innerImpl.set(inner, newSize, null.asInstanceOf[E]) // free reference for GC
+      result
     } else {
-      val innerJS = this.innerJS // local copy
-      if (innerJS.length > 1) {
-        val newSize = innerJS.length - 1
-        val result = innerJS(1)
-        innerJS(1) = innerJS(newSize)
-        innerJS.length = newSize
-        fixDown(1)
-        result
-      } else {
-        null.asInstanceOf[E]
-      }
+      null.asInstanceOf[E]
     }
   }
 
@@ -321,14 +256,7 @@ class PriorityQueue[E] private (
    *  heap property.
    */
   private[this] def fixUpOrDown(m: Int): Unit = {
-    if (m > 1 && {
-        if (LinkingInfo.isWebAssembly)
-          comp.compare(
-              innerWasm(m >> 1).asInstanceOf[E],
-              innerWasm(m).asInstanceOf[E]) > 0
-        else
-          comp.compare(innerJS(m >> 1), innerJS(m)) > 0
-    })
+    if (m > 1 && comp.compare(innerImpl.get(inner, m >> 1), innerImpl.get(inner, m)) > 0)
       fixUp(m)
     else
       fixDown(m)
@@ -338,33 +266,21 @@ class PriorityQueue[E] private (
    *  the root.
    */
   private[this] def fixUp(m: Int): Unit = {
-    // local copy
-    val innerWasm = this.innerWasm
-    val innerJS = this.innerJS
+    val inner = this.inner // local copy
 
     /* At each step, even though `m` changes, the element moves with it, and
      * hence inner(m) is always the same initial `innerAtM`.
      */
-    val innerAtM =
-      if (LinkingInfo.isWebAssembly) innerWasm(m).asInstanceOf[E]
-      else innerJS(m)
+    val innerAtM = innerImpl.get(inner, m)
 
     @inline @tailrec
     def loop(m: Int): Unit = {
       if (m > 1) {
         val parent = m >> 1
-        if (LinkingInfo.isWebAssembly) {
-          val innerAtParent = innerWasm(parent).asInstanceOf[E]
-          if (comp.compare(innerAtParent, innerAtM) > 0) {
-            innerWasm(parent) = innerAtM.asInstanceOf[AnyRef]
-            innerWasm(m) = innerAtParent.asInstanceOf[AnyRef]
-          }
-        } else {
-          val innerAtParent = innerJS(parent)
-          if (comp.compare(innerAtParent, innerAtM) > 0) {
-            innerJS(parent) = innerAtM
-            innerJS(m) = innerAtParent
-          }
+        val innerAtParent = innerImpl.get(inner, parent)
+        if (comp.compare(innerAtParent, innerAtM) > 0) {
+          innerImpl.set(inner, parent, innerAtM)
+          innerImpl.set(inner, m, innerAtParent)
         }
         loop(parent)
       }
@@ -377,31 +293,23 @@ class PriorityQueue[E] private (
    *  towards the leaves.
    */
   private[this] def fixDown(m: Int): Unit = {
-    // local copy
-    val innerWasm = this.innerWasm
-    val innerJS = this.innerJS
-    val size = length() - 1
+    val inner = this.inner // local copy
+    val size = innerImpl.length(inner) - 1
 
     /* At each step, even though `m` changes, the element moves with it, and
      * hence inner(m) is always the same initial `innerAtM`.
      */
-    val innerAtM =
-      if (LinkingInfo.isWebAssembly) innerWasm(m).asInstanceOf[E]
-      else innerJS(m)
+    val innerAtM = innerImpl.get(inner, m)
 
     @inline @tailrec
     def loop(m: Int): Unit = {
       var j = 2 * m // left child of `m`
       if (j <= size) {
-        var innerAtJ =
-          if (LinkingInfo.isWebAssembly) innerWasm(j).asInstanceOf[E]
-          else innerJS(j)
+        var innerAtJ = innerImpl.get(inner, j)
 
         // if the left child is greater than the right child, switch to the right child
         if (j < size) {
-          val innerAtJPlus1 =
-            if (LinkingInfo.isWebAssembly) innerWasm(j + 1).asInstanceOf[E]
-            else innerJS(j + 1)
+          val innerAtJPlus1 = innerImpl.get(inner, j + 1)
           if (comp.compare(innerAtJ, innerAtJPlus1) > 0) {
             j += 1
             innerAtJ = innerAtJPlus1
@@ -410,13 +318,8 @@ class PriorityQueue[E] private (
 
         // if the node `m` is greater than the selected child, swap and recurse
         if (comp.compare(innerAtM, innerAtJ) > 0) {
-          if (LinkingInfo.isWebAssembly) {
-            innerWasm(m) = innerAtJ.asInstanceOf[AnyRef]
-            innerWasm(j) = innerAtM.asInstanceOf[AnyRef]
-          } else {
-            innerJS(m) = innerAtJ
-            innerJS(j) = innerAtM
-          }
+          innerImpl.set(inner, m, innerAtJ)
+          innerImpl.set(inner, j, innerAtM)
           loop(j)
         }
       }
@@ -425,12 +328,68 @@ class PriorityQueue[E] private (
     loop(m)
   }
 
-  @inline private def length() =
-    if (LinkingInfo.isWebAssembly) innerSize
-    else innerJS.length
+  private sealed abstract class InnerArrayImpl {
+    type Repr <: AnyRef
 
-  // Wasm only
-  private def ensureCapacity(minCapacity: Int): Unit =
-    if (innerWasm.length < minCapacity)
-      innerWasm = Arrays.copyOf(innerWasm, roundUpToPowerOfTwo(minCapacity))
+    def make(initialCapacity: Int): Repr
+    def length(v: Repr): Int
+    def setLength(v: Repr, newLength: Int): Unit
+    def get(v: Repr, index: Int): E
+    def set(v: Repr, index: Int, e: E): Unit
+    def push(v: Repr, e: E): Unit
+    def resized(v: Repr, minCapacity: Int): Repr
+    def capacity(v: Repr): Int
+    def copyFrom(v: Repr, from: Int): Repr
+    def clear(v: Repr): Unit
+  }
+
+  private object InnerArrayImpl {
+    object JSArrayImpl extends InnerArrayImpl {
+      type Repr = js.Array[E]
+
+      // The index 0 is not used; the root is at index 1.
+      // This is standard practice in binary heaps, to simplify arithmetics.
+      @inline def make(initialCapacity: Int): Repr = js.Array[E](null.asInstanceOf[E])
+      @inline def length(v: Repr): Int = v.length
+      @inline def setLength(v: Repr, newLength: Int): Unit =
+        v.length = newLength
+      @inline def get(v: Repr, index: Int): E = v(index)
+      @inline def set(v: Repr, index: Int, e: E): Unit =
+        v(index) = e
+      @inline def push(v: Repr, e: E): Unit =
+        v.push(e)
+      @inline def resized(v: Repr, minCapacity: Int): Repr = v // no used
+      @inline def capacity(v: Repr): Int = 0 // no used
+      @inline def copyFrom(v: Repr, from: Int): Repr =
+        v.jsSlice(from)
+      @inline def clear(v: Repr): Unit =
+        v.length = 1
+    }
+
+    object JArrayImpl extends InnerArrayImpl {
+      type Repr = Array[AnyRef]
+      private var _size = 1
+
+      @inline def make(initialCapacity: Int): Repr = new Array[AnyRef](initialCapacity)
+      @inline def length(v: Repr): Int = _size
+      @inline def setLength(v: Repr, newLength: Int): Unit =
+        _size = newLength
+      @inline def get(v: Repr, index: Int): E = v(index).asInstanceOf[E]
+      @inline def set(v: Repr, index: Int, e: E): Unit =
+        v(index) = e.asInstanceOf[AnyRef]
+      @inline def push(v: Repr, e: E): Unit = {
+        v(_size) = e.asInstanceOf[AnyRef]
+        _size += 1
+      }
+      @inline def resized(v: Repr, minCapacity: Int): Repr =
+        Arrays.copyOf(v, roundUpToPowerOfTwo(minCapacity))
+      @inline def capacity(v: Repr): Int = v.length
+      @inline def copyFrom(v: Repr, from: Int): Repr =
+        Arrays.copyOfRange(v, from, _size)
+      @inline def clear(v: Repr): Unit = {
+        Arrays.fill(v, null)
+        _size = 1
+      }
+    }
+  }
 }
