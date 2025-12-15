@@ -1,0 +1,37 @@
+name: sbt Plugin Scripted Tests
+
+on:
+  push:
+  workflow_dispatch:
+
+env:
+  SBT_OPTS: '-Xmx6g -Xms1g -Xss4m'
+
+jobs:
+  scripted:
+    strategy:
+      matrix:
+        java: [ '11' ]
+        os: [ ubuntu-latest ]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up JDK ${{ matrix.java }}
+      uses: coursier/setup-action@v1
+      with:
+        jvm: temurin:1.${{ matrix.java }}
+        apps: sbt
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24.x'
+        cache: 'npm'
+
+    - name: npm install
+      run: npm install
+
+    - name: Run sbtPlugin/scripted
+      run: sbt sbtPlugin/scripted
