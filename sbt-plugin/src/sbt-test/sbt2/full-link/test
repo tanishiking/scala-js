@@ -1,0 +1,6 @@
+# Test fast linking
+> fastLinkJS
+> run
+
+# Test full linking
+> fullLinkJS
