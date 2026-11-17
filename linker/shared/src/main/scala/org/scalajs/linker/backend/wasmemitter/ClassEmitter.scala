@@ -788,14 +788,14 @@ class ClassEmitter(coreSpec: CoreSpec) {
 
   private def genVTableTypeFields(classInfo: ClassInfo)(
       implicit ctx: WasmMainRecTypeContext): List[watpe.StructField] = {
-    val itableSlotFields = (0 until ctx.itablesLength).map { i =>
+    val itableSlotFields = List(
       watpe.StructField(
-        genFieldID.vtableStruct.itableSlot(i),
+        genFieldID.vtableStruct.itables,
         OriginalName.NoOriginalName,
-        watpe.RefType.nullable(watpe.HeapType.Struct),
+        watpe.RefType(genTypeID.itables),
         isMutable = false
       )
-    }.toList
+    )
     val vtableFields = classInfo.tableEntries.map { methodName =>
       watpe.StructField(
         genFieldID.forMethodTableEntry(methodName),
@@ -848,9 +848,21 @@ class ClassEmitter(coreSpec: CoreSpec) {
         fb += ctx.getVTableInstr(genTypeID.ObjectStruct)
         fb += wa.StructGet(
           genTypeID.ObjectVTable,
-          genFieldID.vtableStruct.itableSlot(classInfo.itableIdx)
+          genFieldID.vtableStruct.itables
         )
-        fb += wa.RefTest(watpe.RefType(genTypeID.forITable(className)))
+        val itablesLocal = fb.addLocal("itables", watpe.RefType(genTypeID.itables))
+        fb += wa.LocalTee(itablesLocal)
+        fb += wa.ArrayLen
+        fb += wa.I32Const(classInfo.itableIdx)
+        fb += wa.I32GtU
+        fb.ifThenElse(watpe.Int32) {
+          fb += wa.LocalGet(itablesLocal)
+          fb += wa.I32Const(classInfo.itableIdx)
+          fb += wa.ArrayGet(genTypeID.itables)
+          fb += wa.RefTest(watpe.RefType(genTypeID.forITable(className)))
+        } {
+          fb += wa.I32Const(0)
+        }
         fb += wa.Return
       } // test fail
 
@@ -2018,6 +2030,10 @@ object ClassEmitter {
     }
     val resolvedMethodInfos = classInfoForResolving.resolvedMethodInfos
 
+    // Track the largest itable index + 1.
+    // Each class has an itables array of this length, rather than all classes has a fixed itables length.
+    var length = 0
+
     for {
       ancestor <- ancestors
       // Use getClassInfoOption in case the reachability analysis got rid of those interfaces
@@ -2028,8 +2044,9 @@ object ClassEmitter {
         wa.RefFunc(resolvedMethodInfos(method).tableEntryID)
       } :+ wa.StructNew(genTypeID.forITable(ancestor))
       itablesInit(interfaceInfo.itableIdx) = init
+      length = math.max(length, interfaceInfo.itableIdx + 1)
     }
 
-    itablesInit.flatten.toList
+    itablesInit.take(length).flatten.toList :+ wa.ArrayNewFixed(genTypeID.itables, length)
   }
 }

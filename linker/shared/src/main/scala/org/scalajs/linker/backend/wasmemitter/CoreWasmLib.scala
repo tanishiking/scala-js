@@ -203,6 +203,11 @@ final class CoreWasmLib(coreSpec: CoreSpec, globalInfo: LinkedGlobalInfo) {
     )
 
     genCoreType(
+      genTypeID.itables,
+      ArrayType(FieldType(RefType.nullable(HeapType.Struct), isMutable = false))
+    )
+
+    genCoreType(
       genTypeID.typeDataArray,
       ArrayType(FieldType(RefType(genTypeID.typeData), isMutable = false))
     )

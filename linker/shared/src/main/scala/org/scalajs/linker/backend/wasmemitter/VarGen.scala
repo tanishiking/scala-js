@@ -415,7 +415,7 @@ object VarGen {
 
     /** Extension of `typeData` for vtables, starting with `jl.Object`. */
     object vtableStruct {
-      final case class itableSlot(i: Int) extends FieldID
+      case object itables extends FieldID
     }
 
     /** The magic `data` field of type `(ref typeData)`, injected into `jl.Class`. */
@@ -528,6 +528,7 @@ object VarGen {
       }
     }
 
+    case object itables extends TypeID
     case object typeDataArray extends TypeID
     case object reflectiveProxies extends TypeID
 

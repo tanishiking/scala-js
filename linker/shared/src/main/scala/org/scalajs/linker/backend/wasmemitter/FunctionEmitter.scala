@@ -1282,8 +1282,11 @@ private class FunctionEmitter private (
       fb += ctx.getVTableInstr(genTypeID.ObjectStruct)
       fb += wa.StructGet(
         genTypeID.ObjectVTable,
-        genFieldID.vtableStruct.itableSlot(receiverClassInfo.itableIdx)
+        genFieldID.vtableStruct.itables
       )
+      // The receiver implements this interface, no bounds check is needed.
+      fb += wa.I32Const(receiverClassInfo.itableIdx)
+      fb += wa.ArrayGet(genTypeID.itables)
       fb += wa.RefCast(watpe.RefType(genTypeID.forITable(receiverClassInfo.name)))
       fb += wa.StructGet(
         genTypeID.forITable(receiverClassInfo.name),
